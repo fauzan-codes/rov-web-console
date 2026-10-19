@@ -1,3 +1,10 @@
+//  ./frontend/js/recorder.js
+//  recorder.js - rekam video (MediaRecorder), telemetri CSV, dan siapkan data untuk replay. Semua file disimpan di LAPTOP.
+
+//  NOTE:
+//  Alur: START -> kumpulkan frame video + baris CSV STOP  -> simpan video & CSV, lalu isi replayData
+//  replayData dipakai replay.js (modal REPLAY).
+
 
 import { CAMERAS, REC } from "./config.js";
 import { appendLog, getLogSince } from "./logger.js";
@@ -13,11 +20,11 @@ export const CSV_HEADER = [
 ];
 
 let recording    = false;
-let recorders    = [];    
+let recorders    = []; 
 let csvRows      = [];
 let recStartTime = null;
 let replayData   = null;
-let resetGen     = 0;     
+let resetGen     = 0; 
 let onReplayReady = () => {};
 
 const btnRecord = $("btnRecord");
@@ -25,10 +32,12 @@ const btnRecord = $("btnRecord");
 export const isRecording   = () => recording;
 export const getReplayData = () => replayData;
 
+// Daftarkan callback(ready:boolean) - dipakai main.js untuk menyalakan tombol REPLAY.
 export function setReplayReadyHandler(cb) {
   onReplayReady = cb;
 }
 
+// Dipanggil telemetry.js tiap siklus; diabaikan kalau tidak sedang merekam.
 export function pushCsvRow(d) {
   if (!recording) return;
   const f = (v) => (v || 0).toFixed(4);
@@ -49,8 +58,10 @@ function setRecordButton(active) {
   btnRecord.classList.toggle("recording-active", active);
 }
 
+// ===== Rekam video dari <img> MJPEG lewat canvas =====
 function canvasRecorderFor(img) {
   const canvas = document.createElement("canvas");
+  // Ikuti rasio asli stream (dulu dipaksa 640x480 -> gambar 16:9 gepeng)
   canvas.width  = img.naturalWidth  || REC.FALLBACK_W;
   canvas.height = img.naturalHeight || REC.FALLBACK_H;
   const ctx = canvas.getContext("2d");
@@ -58,7 +69,7 @@ function canvasRecorderFor(img) {
   let running = true;
   const draw = () => {
     if (!running) return;
-    try { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); } catch (_) {  }
+    try { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); } catch (_) { /* frame belum siap */ }
     requestAnimationFrame(draw);
   };
   draw();
@@ -92,7 +103,7 @@ export function startRecording() {
     const r = canvasRecorderFor(img);
     r.label = cam.label;
     r.index = index;
-    r.rec.start(1000);  
+    r.rec.start(1000); // kumpulkan chunk tiap 1 detik
     recorders.push(r);
   });
 
@@ -107,11 +118,11 @@ export function startRecording() {
 
 async function finalizeReplayData(videoBlobs, gen, startMs) {
   const trajBlob = await getTrajectoryBlob();
-  if (gen !== resetGen) return; 
+  if (gen !== resetGen) return;
 
   replayData = {
-    sessionId:   getSessionId(),
-    videoBlobs,                        
+    sessionId:   getSessionId(), 
+    videoBlobs,
     csvRows:     csvRows.slice(),
     trajSnapBlob: trajBlob,
     trajPoints:  getTrajPoints(),
@@ -164,13 +175,14 @@ export function stopRecording() {
   setRecordButton(false);
   appendLog("[REC] ■ Rekaman selesai.");
 
-  tryFinalize();  
+  tryFinalize();
 }
 
 export function toggleRecord() {
   recording ? stopRecording() : startRecording();
 }
 
+// Dipanggil saat RESET SESSION.
 export function resetRecorderData() {
   resetGen++;
   csvRows = [];

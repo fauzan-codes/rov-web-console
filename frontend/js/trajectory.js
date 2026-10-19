@@ -1,3 +1,15 @@
+//  ./frontend/js/trajectory.js
+//  trajectory.js - peta jejak ROV (panel TRAJECTORY REPLAY)
+
+//  NOTE:
+//  Sumber posisi (posMode) - TIDAK ada hubungannya dengan flight mode ArduSub (MANUAL/STABILIZE/dst):
+//    "PIXHAWK" = x/y dari Pixhawk (NED, pos_valid = true)
+//    "DR"      = dr_x/dr_y dead reckoning dari backend (mis. di kolam)
+//    "WAITING" = belum ada data posisi
+//    "OFFLINE" = browser tidak bisa menghubungi backend
+//
+//  Elemen (canvas, tombol, statistik) ada di index.html; modul ini hanya menggambar dan mengikat tombol.
+
 
 import { DEPTH_WARN_M, TRAJ } from "./config.js";
 import { appendLog } from "./logger.js";
@@ -7,8 +19,9 @@ import { stamp, $ } from "./util.js";
 
 const { MAX_POINTS, TAIL, MIN_MOVE_NED, MIN_MOVE_DR, WAYPOINT_SPACING } = TRAJ;
 
-let points = [];         
-let wpMarkers = [];      
+// ===== State =====
+let points = [];      // {x, y, depth, yaw, t}  (relatif thd titik start)
+let wpMarkers = [];   // penanda bulat bernomor, gaya QGroundControl
 let wpCumDist = 0;
 let wpLastMarkerDist = 0;
 let startX = null;
@@ -17,16 +30,17 @@ let paused = false;
 let posMode = "WAITING";
 let liveYaw = 0;
 
+// ===== Elemen =====
 let canvas = null;
 let ctx = null;
 let infoEl, distEl, maxDepthEl, ptsEl, pauseBtn;
 let lastReadout = "";
 
+// ==================== API untuk modul lain ====================
 export const getTrajPoints = () => points.slice();
 
 export function recordTrajPoint(x, y, depth, yawDeg, mode) {
   if (paused) return;
-
   if (Number.isFinite(yawDeg)) liveYaw = yawDeg;
 
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
@@ -95,6 +109,7 @@ function togglePause() {
   appendLog(paused ? "Trajectory PAUSED." : "Trajectory RESUMED.");
 }
 
+// ===== Snapshot canvas =====
 export function getTrajectoryBlob() {
   return new Promise((resolve) => {
     if (!canvas) { resolve(null); return; }
@@ -111,6 +126,7 @@ export function saveTrajectoryImage(label) {
   });
 }
 
+// ==================== Gambar ====================
 function depthRGB(depth) {
   const dr = Math.min(depth / (DEPTH_WARN_M * 1.5), 1);
   return [
@@ -188,7 +204,7 @@ function drawEmptyMessage(W, H) {
   ctx.restore();
 }
 
-
+/** Skala + offset supaya seluruh jejak muat di canvas. */
 function computeView(W, H) {
   const PAD = 28;
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -207,7 +223,7 @@ function computeView(W, H) {
 function drawTrail(s2c) {
   const tailStart = Math.max(0, points.length - TAIL);
 
-
+  // Garis putus-putus tipis
   if (tailStart > 1) {
     ctx.beginPath();
     ctx.strokeStyle = "rgba(34,211,238,0.13)";
@@ -223,7 +239,7 @@ function drawTrail(s2c) {
     ctx.setLineDash([]);
   }
 
-
+  // Ekor terbaru: tebal, warna menurut kedalaman, makin baru makin pekat
   const tail = points.slice(tailStart);
   for (let i = 1; i < tail.length; i++) {
     const p0 = tail[i - 1], p1 = tail[i];
@@ -240,7 +256,7 @@ function drawTrail(s2c) {
   }
 }
 
-
+/** Posisi ROV sekarang: ikon dari model 3D (rovTopIcon.js), fallback dot+panah. */
 function drawRov(s2c, cur) {
   const [cx, cy] = s2c(cur);
   const ICON_DRAW = 30;
@@ -261,7 +277,7 @@ function drawRov(s2c, cur) {
     ctx.drawImage(iconCanvas, -ICON_DRAW / 2, -ICON_DRAW / 2, ICON_DRAW, ICON_DRAW);
     ctx.restore();
 
-
+    // Badge jumlah waypoint
     const bx = cx + ICON_DRAW * 0.34, by = cy + ICON_DRAW * 0.34;
     ctx.beginPath(); ctx.arc(bx, by, 6, 0, Math.PI * 2);
     ctx.fillStyle = "#f59e0b"; ctx.fill();
@@ -374,6 +390,7 @@ function draw() {
 }
 
 
+// ==================== Init ====================
 function resizeCanvas() {
   if (!canvas) return;
   const rect = canvas.getBoundingClientRect();

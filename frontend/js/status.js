@@ -1,3 +1,6 @@
+//  ./frontend/js/status.js
+//  status.js - polling GET /status (resolusi, FPS terukur, zoom, dan penanda mode DEV backend). Tidak kritis: kalau gagal, diam.
+
 
 import { BACKEND_URL, STATUS_POLL_MS } from "./config.js";
 import { applyStatus } from "./camera.js";
@@ -17,7 +20,7 @@ export function startStatusPolling() {
         applyStatus(status);
         if (devBadge) devBadge.hidden = !status.dev_mode;
       }
-    } catch (_) {  }
+    } catch (_) { /* backend belum nyala/putus */ }
     setTimeout(tick, STATUS_POLL_MS);
   };
 

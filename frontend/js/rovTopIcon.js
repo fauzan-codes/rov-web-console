@@ -1,3 +1,16 @@
+//  ./frontend/js/rovTopIcon.js
+//  rovTopIcon.js - Ikon ROV di panel "TRAJECTORY REPLAY"
+
+//  NOTE:
+//  model 3D asli ROV (assembly_rov_80.glb) - model yang sama yang
+//  dipakai panel "ROV DESIGN" (rov3d.js) - supaya ikon di peta benar-benar terlihat seperti desain ROV kita, bukan cuma dot.
+//
+//  Cara kerja:
+//   1. Render model sekali dari kamera ortografis tegak lurus dari atas ke sebuah canvas kecil (256x256), hasilnya di-cache jadi "sprite" PNG diam (tidak perlu render ulang tiap frame - jauh lebih ringan daripada rov3d.js yang render live tiap frame).
+//   2. interact.js (drawTraj) memanggil window.getRovTopIconCanvas() tiap frame untuk mengambil sprite ini, lalu memutarnya sendiri di canvas 2D sesuai heading (yaw) — jadi rotasi heading tetap real-time meski render 3D-nya statis.
+//
+//  Kalibrasi arah "depan" model:
+//  Bergantung bagaimana model 3D digambar, sisi yang tampil sebagai "depan" ROV pada sprite bisa saja tidak menghadap ke atas (utara, yaw=0) secara default. Kalau ikon di peta trajectory kelihatan "muter salah arah" dibanding arah gerak ROV yang sebenarnya, ubah FORWARD_OFFSET_DEG di bawah (misal 90, 180, atau -90) sampai cocok - atau panggil window.setRovIconForwardOffset(deg) dari console browser untuk coba-coba tanpa reload file.
 
 
 import * as THREE from 'three';
@@ -6,10 +19,11 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 const BACKEND_URL = window.ROV_BACKEND_URL || 'http://192.168.1.10:8080';
 const MODEL_URL    = `${BACKEND_URL}/models/assembly_rov_80.glb`;
 
-const ICON_RES = 256;
+const ICON_RES = 256; // resolusi render sprite (px)
 
-let FORWARD_OFFSET_DEG = 0;
+let FORWARD_OFFSET_DEG = 0; // lihat catatan kalibrasi di atas
 
+// ===== Scene tampak-atas (untuk snapshot) =====
 const scene = new THREE.Scene();
 scene.background = null;
 
@@ -36,7 +50,7 @@ scene.add(fill);
 const rov = new THREE.Group();
 scene.add(rov);
 
-let _iconCanvas = null;
+let _iconCanvas = null; // cache hasil render (256x256, transparan)
 let modelReady  = false;
 
 function fitModel(model) {
@@ -73,6 +87,7 @@ new GLTFLoader().load(
   }
 );
 
+// ===== API dipakai interact.js =====
 window.getRovTopIconCanvas = function () {
   return modelReady ? _iconCanvas : null;
 };

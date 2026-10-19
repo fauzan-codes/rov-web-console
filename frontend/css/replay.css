@@ -1,3 +1,7 @@
+/* ./frontend/css/replay.css
+    replay.css - modal REPLAY (dibuat oleh js/replay.js) */
+
+
 #rov-replay-modal {
   position: fixed;
   inset: 0;
@@ -26,12 +30,13 @@
   padding: 18px;
   color: #e5f7ff;
   font-family: "Segoe UI", Arial, sans-serif;
-  font-size: 14px;   
+  font-size: 14px;   /* ukuran tetap, tidak ikut skala rem halaman utama */
   scrollbar-width: thin;
 }
 
 .rp-wide { width: min(820px, 97vw); }
 
+/* ===== Header ===== */
 .rp-header {
   display: flex;
   justify-content: space-between;
@@ -56,6 +61,7 @@
 
 #rp-close:hover { background: rgba(239, 68, 68, 0.18); }
 
+/* ===== Belum ada data ===== */
 .rp-no-data {
   text-align: center;
   padding: 30px;
@@ -67,6 +73,7 @@
 .rp-no-data i { font-size: 28px; color: #22d3ee; display: block; margin-bottom: 10px; }
 .rp-no-data b { color: #e5f7ff; }
 
+/* ===== Statistik ===== */
 .rp-stat-row { display: flex; gap: 8px; margin-bottom: 12px; }
 
 .rp-stat {
@@ -84,6 +91,7 @@
 .rp-stat span { font-size: 9px; color: #64748b; letter-spacing: 1px; font-weight: 700; }
 .rp-stat b    { font-size: 15px; color: #22d3ee; font-family: Consolas, monospace; }
 
+/* ===== Video ===== */
 .rp-video-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -123,6 +131,7 @@
 
 .rp-no-cam i { font-size: 24px; }
 
+/* ===== Snapshot trajectory ===== */
 .rp-traj-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
 
 .rp-traj-row img {
@@ -134,6 +143,7 @@
   background: #010812;
 }
 
+/* ===== Log ===== */
 .rp-sect-lbl {
   font-size: 10px;
   color: #94a3b8;
@@ -162,6 +172,7 @@
 
 .rp-log-console div { margin-bottom: 1px; }
 
+/* ===== Kontrol playback ===== */
 .rp-ctrl-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 
 .rp-ctrl-bar button {
@@ -202,6 +213,7 @@
   height: 4px;
 }
 
+/* ===== Export ===== */
 .rp-export-row { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 
 .rp-export-row button {
@@ -223,6 +235,7 @@
 
 .rp-export-row button:hover { background: rgba(34, 211, 238, 0.18); }
 
+/* ===== Folder ===== */
 .rp-folder-row {
   display: flex;
   align-items: center;

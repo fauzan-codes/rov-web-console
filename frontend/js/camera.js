@@ -1,3 +1,10 @@
+//  ./frontend/js/camera.js
+//  camera.js - panel CAM 1 / CAM 2 Toggle ON/OFF, stream MJPEG (+ auto reconnect), snapshot, fullscreen, zoom manual per kamera, dan info resolusi/FPS.
+
+//  NOTE:
+//  Elemen dicari lewat data-cam-id di index.html, jadi menambah
+//  kamera ke-3 = tambah panel di HTML + 1 baris di CAMERAS (config.js).
+
 
 import { BACKEND_URL, CAMERAS, STREAM_RETRY_MS, STREAM_CROSS_ORIGIN } from "./config.js";
 import { appendLog } from "./logger.js";
@@ -5,7 +12,7 @@ import { downloadBlob } from "./storage.js";
 import { sesPrefix } from "./session.js";
 import { timeTag } from "./util.js";
 
-const cams = new Map();   
+const cams = new Map();   // id -> objek kamera (lihat initCameras)
 
 const SIGNAL_ICON = {
   off:        "fa-signal",
@@ -19,6 +26,7 @@ function setSignal(cam, state) {
   cam.signal.innerHTML = `<i class="fa-solid ${SIGNAL_ICON[state] || SIGNAL_ICON.off}"></i>`;
 }
 
+// ===== Start / stop kamera di backend =====
 async function startBackendCamera() {
   try {
     await fetch(`${BACKEND_URL}/start_cameras`, { method: "POST" });
@@ -30,9 +38,10 @@ async function startBackendCamera() {
 async function stopBackendCamera() {
   try {
     await fetch(`${BACKEND_URL}/stop_cameras`, { method: "POST" });
-  } catch (_) {  }
+  } catch (_) { /* backend mati -> tidak ada yang perlu dihentikan */ }
 }
 
+// ===== Stream MJPEG =====
 function createStream(cam) {
   cam.img?.remove();
   clearTimeout(cam.retryTimer);
@@ -62,6 +71,8 @@ function createStream(cam) {
   cam.img = img;
   setSignal(cam, "connecting");
 
+  // Beberapa browser tidak memicu "load" untuk stream MJPEG tanpa akhir;
+  // kalau tidak ada error sampai 2,5 detik, anggap sudah tersambung.
   cam.liveFallbackTimer = setTimeout(() => {
     if (cam.active && cam.signal.dataset.state === "connecting") setSignal(cam, "live");
   }, 2500);
@@ -70,7 +81,7 @@ function createStream(cam) {
 async function turnOn(cam) {
   cam.active = true;
   await startBackendCamera();
-  if (!cam.active) return;   
+  if (!cam.active) return; // dimatikan lagi selama menunggu backend
   createStream(cam);
   cam.box.classList.add("camera-on");
 }
@@ -88,6 +99,7 @@ async function turnOff(cam) {
   if (getActiveCameraCount() === 0) await stopBackendCamera();
 }
 
+// ===== Snapshot =====
 export async function takeSnapshot(cam) {
   const fname = `${sesPrefix()}__snap_${cam.label}_${timeTag()}.jpg`;
   try {
@@ -99,7 +111,7 @@ export async function takeSnapshot(cam) {
     await downloadBlob(await res.blob(), fname);
     appendLog(`[SNAP] Tersimpan: ${fname}`);
   } catch (_) {
-  
+    // Fallback: ambil dari <img> stream lewat canvas
     if (!cam.img) {
       appendLog(`[SNAP] Tidak ada stream ${cam.label}`, "warn");
       return;
@@ -121,6 +133,9 @@ export function takeAllSnapshots() {
   cams.forEach((cam) => takeSnapshot(cam));
 }
 
+// ===== Zoom manual per kamera =====
+// Zoom murni digital crop di backend; 
+// hanya mempengaruhi kamera ang tombolnya ditekan.
 async function setZoom(cam, direction) {
   try {
     const res = await fetch(`${BACKEND_URL}/zoom/${direction}/${cam.id}`, { method: "POST" });
@@ -136,11 +151,13 @@ async function setZoom(cam, direction) {
   }
 }
 
+// ===== Fullscreen =====
 function toggleFullscreen(box) {
   if (!document.fullscreenElement) box.requestFullscreen().catch(() => {});
   else document.exitFullscreen();
 }
 
+// ===== Info dari GET /status (dipanggil status.js) =====
 export function applyStatus(status) {
   const video = status.video || {};
   cams.forEach((cam) => {
@@ -157,9 +174,11 @@ export function applyStatus(status) {
   });
 }
 
+// ===== Dipakai modul lain =====
 export const getActiveCameraCount = () => [...cams.values()].filter((c) => c.active).length;
 export const getStreamImg         = (id) => cams.get(id)?.img || null;
 
+// ===== Init =====
 export function initCameras() {
   CAMERAS.forEach(({ id, label }) => {
     const panel = document.querySelector(`.camera-panel[data-cam-id="${id}"]`);

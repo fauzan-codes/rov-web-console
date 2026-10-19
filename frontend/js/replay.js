@@ -1,3 +1,6 @@
+//  ./frontend/js/replay.js
+//  replay.js - modal REPLAY: putar ulang video, snapshot trajectory, dan log hasil rekaman terakhir. Gaya modal ada di css/replay.css.
+
 
 import { CAMERAS } from "./config.js";
 import { appendLog } from "./logger.js";
@@ -22,6 +25,7 @@ export function openReplayModal() {
   const ptCount   = hasReplay ? data.trajPoints.length : 0;
   const logs      = hasReplay ? data.logs.map((e) => ({ rel: e.t - data.recStartMs, text: e.text })) : [];
 
+  // URL sementara untuk video & gambar (dibebaskan saat modal ditutup)
   const videoUrls = CAMERAS.map((_, i) =>
     hasReplay && data.videoBlobs[i] ? URL.createObjectURL(data.videoBlobs[i]) : null);
   const trajURL = hasReplay && data.trajSnapBlob ? URL.createObjectURL(data.trajSnapBlob) : null;
@@ -99,6 +103,7 @@ export function openReplayModal() {
     </div>`;
   document.body.appendChild(modal);
 
+  // ===== Tutup =====
   let anim = null;
   let paused = true;
   const videos = CAMERAS.map((_, i) => document.getElementById(`rv-cam-${i}`)).filter(Boolean);
@@ -113,6 +118,7 @@ export function openReplayModal() {
   document.getElementById("rp-close").onclick   = close;
   document.getElementById("rp-overlay").onclick = close;
 
+  // ===== Pilih folder (buka ulang modal supaya label ikut berubah) =====
   document.getElementById("rp-pick-folder").onclick = async () => {
     await pickSaveFolder();
     close();
@@ -121,6 +127,7 @@ export function openReplayModal() {
 
   if (!hasReplay) return;
 
+  // ===== Export =====
   const sid = data.sessionId;
   document.getElementById("rp-dl-csv").onclick = () => {
     if (csvCount === 0) { appendLog("[CSV] Tidak ada data.", "warn"); return; }
@@ -138,16 +145,18 @@ export function openReplayModal() {
     appendLog(`[TRAJ] Tersimpan: ROV_${sid}__trajectory.png`);
   };
 
+  // ===== Playback =====
   const seekEl     = document.getElementById("rv-seek");
   const timeEl     = document.getElementById("rv-time");
   const logConsole = document.getElementById("rv-log-console");
   const logIdxEl   = document.getElementById("rv-log-idx");
   const playBtn    = document.getElementById("rv-play");
 
-  let elapsed = 0;   
+  let elapsed = 0;
   let startWall = 0;
   let shownLogs = 0;
 
+  // seekVideo=true hanya saat pengguna loncat waktu; saat play biasa video berjalan sendiri (mengubah currentTime tiap frame bikin patah).
   function syncUI(ms, seekVideo) {
     const t = Math.min(Math.max(ms, 0), dur);
 
@@ -155,6 +164,7 @@ export function openReplayModal() {
     if (seekEl) seekEl.value = t;
     if (timeEl) timeEl.textContent = `${fmtMs(t)} / ${durStr}`;
 
+    // Log: tampilkan semua baris yang timestamp-nya <= waktu replay
     let count = 0;
     while (count < logs.length && logs[count].rel <= t) count++;
     if (count !== shownLogs) {
@@ -214,7 +224,6 @@ export function openReplayModal() {
 
   syncUI(0, true);
 }
-
 
 onFolderChange(() => {
   const badge = document.getElementById("rp-folder-name");

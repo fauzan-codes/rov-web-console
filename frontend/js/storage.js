@@ -1,3 +1,12 @@
+//  ./frontend/js/storage.js
+//  storage.js - simpan file ke laptop
+
+//  NOTE:
+//  Pakai File System Access API (Chrome/Edge): pengguna memilih satu
+//  folder, lalu semua file berikutnya langsung tertulis ke sana.
+//  Kalau folder belum dipilih / browser tidak mendukung (Firefox),
+//  fallback ke download biasa (folder Downloads).
+
 
 import { appendLog } from "./logger.js";
 
@@ -37,6 +46,7 @@ export async function pickSaveFolder() {
   }
 }
 
+/** Simpan Blob ke folder terpilih, atau fallback ke <a download>. */
 export async function downloadBlob(blob, filename) {
   if (rootDirHandle) {
     try {

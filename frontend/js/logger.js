@@ -1,14 +1,21 @@
+//  ./frontend/js/logger.js
+//  logger.js - panel DATA LOG / SERIAL CONSOLE
+
+//  NOTE:
+//  Panel hanya menampilkan LOG_MAX_DOM_LINES baris terakhir, tapi semua baris (sampai LOG_HISTORY_MAX) disimpan di memori supaya replay & export log tidak ikut terpotong.
+
 
 import { LOG_MAX_DOM_LINES, LOG_HISTORY_MAX } from "./config.js";
 import { $ } from "./util.js";
 
 const consoleEl = $("consoleLog");
-const history = [];
+const history = [];   // [{ t: epoch ms, text }]
 
 const clockFmt = new Intl.DateTimeFormat("en-GB", {
   hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit",
 });
 
+// level: "" | "warn" | "error"
 export function appendLog(msg, level = "") {
   const t = Date.now();
   const text = `[${clockFmt.format(t)}] ${msg}`;
@@ -27,6 +34,7 @@ export function appendLog(msg, level = "") {
   }
 }
 
+// Semua baris log sejak waktu tertentu (epoch ms).
 export function getLogSince(epochMs) {
   return history.filter((e) => e.t >= epochMs);
 }

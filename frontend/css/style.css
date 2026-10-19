@@ -1,4 +1,15 @@
+/* ./frontend/css/style.css
+    style.css - tampilan utama GCS ROV */
+
+/* NOTE:
+  CARA KERJA UKURAN (supaya tidak rusak di laptop lain):
+    - Semua ukuran memakai rem, dan 1rem ikut ukuran layar (lihat `html { font-size }` di bawah). Layar kecil -> semua mengecil proporsional, layar besar -> membesar.
+    - Grid mengikuti tinggi jendela; baris kamera mengambil sisa ruang, baris bawah (QR/telemetry/controls) mengikuti isinya.
+    - Di bawah 1100x620 halaman scroll, bukan mengecil terus.
+    - Target: layar desktop/laptop (bukan HP). */
+
 :root {
+  /* Warna */
   --cyan:   #22d3ee;
   --sky:    #38bdf8;
   --green:  #22c55e;
@@ -8,6 +19,9 @@
   --muted:  #8ea6bb;
   --line:   rgba(148, 163, 184, 0.14);
 
+  /* Cara gambar kamera mengisi kotak: 
+    cover = penuh (sisi terpotong),
+    contain = utuh (ada bar hitam). */
   --video-fit: cover;
 }
 
@@ -17,6 +31,7 @@
   padding: 0;
 }
 
+/* 1rem = 16px di Full HD, 11px di laptop 1366x768 */
 html {
   font-size: clamp(10px, min(1.55vh, 0.85vw), 20px);
 }
@@ -45,6 +60,7 @@ body {
   overflow: hidden;
 }
 
+/* ==================== TOPBAR ==================== */
 .topbar {
   flex: 0 0 auto;
   height: 3.6rem;
@@ -132,6 +148,8 @@ body {
 
 .menu-btn:hover { border-color: rgba(34, 211, 238, 0.55); }
 
+/* ==================== MAIN GRID ==================== */
+/* Baris 1 (kamera + trajectory) mengambil sisa tinggi; baris 2-3 (QR / telemetry) dan controls mengikuti tinggi isinya. */
 .main-grid {
   flex: 1;
   min-height: 0;
@@ -155,6 +173,7 @@ body {
 .telemetry-panel  { grid-area: telemetry; }
 .controls-panel   { grid-area: controls; }
 
+/* ==================== PANEL UMUM ==================== */
 .panel {
   min-width: 0;
   min-height: 0;
@@ -174,6 +193,7 @@ body {
   margin-bottom: 0.5rem;
 }
 
+/* ==================== KAMERA ==================== */
 .camera-panel {
   padding: 0.65rem;
   display: flex;
@@ -238,6 +258,7 @@ body {
 
 .cam-action:active { transform: scale(0.96); }
 
+/* Zoom manual per kamera */
 .zoom-controls {
   display: flex;
   align-items: center;
@@ -269,6 +290,7 @@ body {
   font-family: Consolas, monospace;
 }
 
+/* Toggle ON/OFF (teks ON/OFF digambar lewat ::after) */
 .camera-toggle {
   height: 2.1rem;
   display: inline-flex;
@@ -332,6 +354,7 @@ body {
   color: var(--green);
 }
 
+/* Kotak video */
 .video-box {
   position: relative;
   overflow: hidden;
@@ -404,6 +427,7 @@ body {
 .video-box.camera-on .video-stream      { display: block; }
 .video-box.camera-on .video-placeholder { display: none; }
 
+/* ==================== TRAJECTORY ==================== */
 .trajectory-panel {
   padding: 0.85rem;
   display: flex;
@@ -432,7 +456,7 @@ body {
   position: absolute;
   top: 0.45rem;
   left: 0.55rem;
-  max-width: calc(100% - 4rem); 
+  max-width: calc(100% - 4rem);   /* sisakan ruang untuk kompas di kanan atas */
   font-size: 0.65rem;
   font-family: Consolas, monospace;
   color: var(--cyan);
@@ -496,12 +520,13 @@ body {
   font-family: Consolas, monospace;
 }
 
+/* ==================== ROV DESIGN ==================== */
 .rov-design-panel {
   padding: 0.75rem;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  contain: size;   
+  contain: size;   /* tingginya ikut baris grid, bukan isi viewport 3D */
 }
 
 .rov-design-card {
@@ -509,8 +534,7 @@ body {
   min-height: 0;
   border-radius: 0.55rem;
   border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    radial-gradient(circle at center, rgba(34, 211, 238, 0.09), transparent 55%),
+  background: radial-gradient(circle at center, rgba(34, 211, 238, 0.09), transparent 55%),
     rgba(1, 8, 18, 0.72);
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 0.5fr);
@@ -564,6 +588,7 @@ body {
   color: #f87171;
 }
 
+/* kelas "live" ditambah/dilepas oleh rov3d.js */
 .rov3d-badge.live {
   border-color: rgba(34, 197, 94, 0.4);
   color: var(--green);
@@ -619,6 +644,7 @@ body {
 .rov-specs strong[data-state="warn"] { color: var(--amber); }
 .rov-specs strong[data-state="off"]  { color: #64748b; }
 
+/* ==================== QR SCANNER ==================== */
 .qr-panel { padding: 0.75rem; }
 
 .qr-card {
@@ -700,12 +726,13 @@ body {
 .qr-status strong { color: #94a3b8; }
 .qr-card[data-state="valid"] .qr-status strong { color: var(--green); }
 
+/* ==================== DATA LOG ==================== */
 .log-panel {
   padding: 0.75rem;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  contain: size;   
+  contain: size;   /* tingginya ikut baris grid, bukan jumlah baris log */
 }
 
 .console {
@@ -728,6 +755,7 @@ body {
 .console .warn  { color: #facc15; }
 .console .error { color: var(--red); }
 
+/* ==================== TELEMETRY ==================== */
 .telemetry-panel { padding: 0.75rem; }
 
 .telemetry-grid {
@@ -770,6 +798,7 @@ body {
   font-size: 0.75rem;
 }
 
+/* Alarm Depth */
 .telemetry-card.alarm {
   border-color: var(--red);
   box-shadow: 0 0 14px rgba(239, 68, 68, 0.45);
@@ -812,6 +841,7 @@ body {
   font-family: Consolas, monospace;
 }
 
+/* ==================== CONTROLS ==================== */
 .controls-panel {
   padding: 0.55rem 1.1rem;
   display: flex;
@@ -869,11 +899,13 @@ body {
   border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
+/* Tombol REPLAY menyala kalau sudah ada hasil rekaman */
 .replay.ready {
   box-shadow: 0 0 0 1px var(--cyan), 0 0 12px rgba(34, 211, 238, 0.35);
   color: #cffafe;
 }
 
+/* Tombol folder: nama folder dipotong kalau panjang */
 .folder span {
   max-width: 11rem;
   overflow: hidden;
@@ -886,6 +918,7 @@ body {
   color: var(--cyan);
 }
 
+/* Tombol merah saat sedang recording */
 .record.recording-active {
   background: linear-gradient(135deg, #7f1d1d, #dc2626);
   border: 1px solid rgba(248, 113, 113, 0.6);
@@ -955,6 +988,7 @@ body {
   color: white;
 }
 
+/* ==================== BADGE & TITIK STATUS ==================== */
 .badge {
   display: inline-block;
   padding: 0.12rem 0.5rem;
@@ -997,6 +1031,7 @@ body {
 .dot[data-state="warn"]    { background: var(--amber); box-shadow: 0 0 10px rgba(245, 158, 11, 0.7); }
 .dot[data-state="offline"] { background: var(--red);   box-shadow: 0 0 10px rgba(239, 68, 68, 0.7); }
 
+/* ==================== SCROLLBAR (webkit) ==================== */
 ::-webkit-scrollbar              { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track        { background: #071525; }
 ::-webkit-scrollbar-thumb        { background: #334155; border-radius: 3px; }

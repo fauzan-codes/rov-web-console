@@ -8,8 +8,10 @@
   <link rel="stylesheet" href="css/style.css" />
   <link rel="stylesheet" href="css/replay.css" />
 
+  <!-- Icon -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 
+  <!-- Import map: agar browser bisa resolve "three" & "three/addons/" yang dipakai rov3d.js dan rovTopIcon.js (ES module) -->
   <script type="importmap">
   {
     "imports": {
@@ -20,9 +22,13 @@
   </script>
 </head>
 
+<!--
+  NOTE: nilai yang tampil di sini ("--", "-", dst) hanya placeholder sebelum data dari backend datang. Angka asli diisi oleh js/telemetry.js, js/camera.js, js/status.js, dan js/clock.js. Elemen yang dipakai JavaScript dicari lewat id / data-* — jangan hapus atau ganti nama id tanpa mengubah file JS yang memakainya.
+-->
 <body>
   <div class="dashboard">
 
+    <!-- ==================== HEADER ==================== -->
     <header class="topbar">
       <div class="brand">
         <div>
@@ -59,8 +65,10 @@
       </div>
     </header>
 
+    <!-- ==================== MAIN GRID ==================== -->
     <main class="main-grid">
 
+      <!-- CAMERA 1 -->
       <section class="panel camera-panel cam1" data-cam-id="0">
         <div class="panel-head">
           <h2><i class="fa-solid fa-camera"></i> CAM 1</h2>
@@ -100,6 +108,7 @@
         </div>
       </section>
 
+      <!-- CAMERA 2 -->
       <section class="panel camera-panel cam2" data-cam-id="1">
         <div class="panel-head">
           <h2><i class="fa-solid fa-camera"></i> CAM 2</h2>
@@ -139,6 +148,7 @@
         </div>
       </section>
 
+      <!-- TRAJECTORY -->
       <aside class="panel trajectory-panel">
         <h2 class="section-title">TRAJECTORY REPLAY</h2>
 
@@ -159,6 +169,7 @@
         </div>
       </aside>
 
+      <!-- QR SCANNER -->
       <section class="panel qr-panel">
         <h2 class="section-title">QR SCANNER</h2>
 
@@ -183,10 +194,12 @@
         </div>
       </section>
 
+      <!-- ROV DESIGN -->
       <section class="panel rov-design-panel">
         <h2 class="section-title">ROV DESIGN</h2>
         <div class="rov-design-card">
           <div class="rov-body">
+            <!-- id rovViewport, rov3dLink, rov3dDepth dipakai rov3d.js -->
             <div id="rovViewport" class="rov-viewport"></div>
             <div class="rov-viewport-overlay">
               <span id="rov3dLink" class="rov3d-badge">
@@ -213,11 +226,13 @@
         </div>
       </section>
 
+      <!-- DATA LOG -->
       <section class="panel log-panel">
         <h2 class="section-title">DATA LOG / SERIAL CONSOLE</h2>
         <div class="console" id="consoleLog"></div>
       </section>
 
+      <!-- TELEMETRY -->
       <section class="panel telemetry-panel">
         <h2 class="section-title">TELEMETRY</h2>
 
@@ -254,6 +269,7 @@
         </div>
       </section>
 
+      <!-- CONTROLS -->
       <section class="panel controls-panel">
         <h2 class="section-title">CONTROLS</h2>
 

@@ -1,3 +1,6 @@
+//  ./frontend/js/telemetry.js
+//  telemetry.js - polling GET /telemetry lalu bagikan datanya ke: panel TELEMETRY, QR SCANNER, ROV DESIGN (3D), TRAJECTORY, rekaman CSV, status sistem di header, dan DATA LOG.
+
 
 import {
   BACKEND_URL, TELEMETRY_POLL_MS, TELEMETRY_TIMEOUT_MS,
@@ -9,6 +12,7 @@ import { pushCsvRow } from "./recorder.js";
 import { getActiveCameraCount } from "./camera.js";
 import { $ } from "./util.js";
 
+// ===== Elemen =====
 const el = {
   depth:      $("telDepth"),
   depthCard:  $("depthCard"),
@@ -33,17 +37,20 @@ document.querySelectorAll("[data-pwm]").forEach((b) => {
   pwmEls[`PWM${b.dataset.pwm}`] = b;
 });
 
+// ===== State =====
 let offline = false;
 let lastTelemetryLog = 0;
 let depthAlarmArmed = false;
 let depthAlarmActive = false;
 let lastSystemState = "";
 
+
+// ==================== Status sistem (header + brand) ====================
 const SYSTEM_VIEW = {
-  connecting: { badge: "CONNECTING",  cls: "amber-badge", dot: "warn",    text: "CONNECTING TO BACKEND…" },
-  ok:         { badge: "OPERATIONAL", cls: "green-badge", dot: "ok",      text: "GCS SYSTEM ONLINE" },
-  nolink:     { badge: "NO PIXHAWK",  cls: "amber-badge", dot: "warn",    text: "BACKEND ONLINE · NO PIXHAWK" },
-  offline:    { badge: "OFFLINE",     cls: "red-badge",   dot: "offline", text: "BACKEND OFFLINE" },
+  connecting: { badge: "CONNECTING", cls: "amber-badge", dot: "warn", text: "CONNECTING TO BACKEND…" },
+  ok: { badge: "OPERATIONAL", cls: "green-badge", dot: "ok", text: "GCS SYSTEM ONLINE" },
+  nolink: { badge: "NO PIXHAWK", cls: "amber-badge", dot: "warn", text: "BACKEND ONLINE · NO PIXHAWK" },
+  offline: { badge: "OFFLINE", cls: "red-badge", dot: "offline", text: "BACKEND OFFLINE" },
 };
 
 function setSystemState(kind) {
@@ -61,9 +68,11 @@ function setSystemState(kind) {
 function setSpec(node, text, state) {
   if (!node) return;
   node.textContent = text;
-  node.dataset.state = state;   
+  node.dataset.state = state;   // ok | off | warn
 }
 
+
+// ==================== Alarm Depth Button ====================
 export function setDepthAlarmArmed(armed) {
   depthAlarmArmed = armed;
   if (!armed) {
@@ -81,6 +90,8 @@ function updateDepthAlarm(depth) {
   depthAlarmActive = active;
 }
 
+
+// ==================== Bagian-bagian UI ====================
 function updatePwm(pwm) {
   if (!pwm) return;
   for (const [label, node] of Object.entries(pwmEls)) {
@@ -112,9 +123,12 @@ function updateSpecs(d) {
   const pwmCount = d.pwm ? Object.values(d.pwm).filter((v) => Number.isFinite(v)).length : 0;
   setSpec(el.specThruster, `${pwmCount} PWM`, d.mavlink_connected && pwmCount > 0 ? "ok" : "off");
 
+  // "gripper" (mis. "READY"/"OPEN"/"CLOSED") di /telemetry, otomatis tampil.
   if (d.gripper !== undefined) setSpec(el.specGripper, String(d.gripper).toUpperCase(), "ok");
 }
 
+
+// Sumber posisi trajectory: NED (Pixhawk/GPS/DVL) dulu, fallback ke DR (dead reckoning dari backend).
 function resolvePosition(d) {
   const posValid = d.pos_valid === true && Number.isFinite(d.x) && Number.isFinite(d.y);
   const drValid  = Number.isFinite(d.dr_x) && Number.isFinite(d.dr_y);
@@ -129,6 +143,8 @@ function resolvePosition(d) {
   return { mode: "WAITING", x: 0, y: 0, depth };
 }
 
+
+// ==================== Satu siklus data masuk ====================
 function applyTelemetry(d) {
   if (offline) {
     offline = false;
@@ -137,11 +153,13 @@ function applyTelemetry(d) {
 
   const yaw = Number.isFinite(d.yaw) ? d.yaw : 0;
 
+  // Panel TELEMETRY
   if (el.depth) el.depth.textContent = `${(d.depth || 0).toFixed(2)} m`;
   if (el.roll)  el.roll.textContent  = `${Math.round(d.roll  || 0)}°`;
   if (el.pitch) el.pitch.textContent = `${Math.round(d.pitch || 0)}°`;
   if (el.yaw)   el.yaw.textContent   = `${Math.round(d.yaw   || 0)}°`;
 
+  // Model 3D (rov3d.js) mengikuti orientasi Pixhawk
   if (window.updateRovOrientation) {
     window.updateRovOrientation(d.roll || 0, d.pitch || 0, d.yaw || 0, d.depth || 0, !!d.mavlink_connected);
   }
@@ -151,6 +169,7 @@ function applyTelemetry(d) {
   updateSpecs(d);
   setSystemState(d.mavlink_connected ? "ok" : "nolink");
 
+  // Posisi -> trajectory 2D & 3D
   const pos = resolvePosition(d);
   if (pos.mode === "WAITING") {
     setWaiting(yaw);
@@ -164,6 +183,7 @@ function applyTelemetry(d) {
   updateDepthAlarm(pos.depth);
   pushCsvRow(d);
 
+
   const now = Date.now();
   if (now - lastTelemetryLog >= LOG_TELEMETRY_EVERY_MS) {
     lastTelemetryLog = now;
@@ -175,6 +195,7 @@ function applyTelemetry(d) {
 }
 
 function handleOffline(err) {
+  // Kalau backend tidak bisa dihubungi sama sekali (alamat salah, backend mati, jaringan putus), tampilkan jelas — beda dari "Pixhawk belum kirim posisi".
   if (!offline) {
     console.error("[GCS] fetchTelemetry gagal — cek alamat backend/jaringan/backend:", err);
     appendLog(`[ERR] Tidak bisa menghubungi backend di ${BACKEND_URL} — cek IP/jaringan/status backend.`, "error");
@@ -199,6 +220,7 @@ async function fetchTelemetry() {
   }
 }
 
+/** Request berikutnya baru dijadwalkan setelah yang sekarang selesai (tidak menumpuk). */
 export function startTelemetry() {
   setSystemState("connecting");
   const tick = async () => {

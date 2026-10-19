@@ -1,3 +1,6 @@
+//  ./frontend/js/clock.js
+//  clock.js - tanggal & jam di header Memakai zona waktu tetap (config.js), jadi tidak salah kalau laptop disetel ke zona waktu lain.
+
 
 import { TIMEZONE, TIMEZONE_LABEL } from "./config.js";
 import { $ } from "./util.js";

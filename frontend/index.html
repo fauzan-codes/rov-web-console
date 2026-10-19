@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ROV Ground Control Station</title>
+
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/replay.css" />
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+
+<body>
+  <div class="dashboard">
+
+    <header class="topbar">
+      <div class="brand">
+        <div>
+          <h3>UNIVERSITAS NEGERI SURABAYA</h3>
+          <p>
+            <span class="dot" id="brandDot" data-state="warn"></span>
+            <span id="brandStatus">CONNECTING TO BACKEND…</span>
+            <span class="dev-badge" id="devBadge" hidden>DEV MODE</span>
+          </p>
+        </div>
+      </div>
+
+      <h1>GROUND CONTROL STATION</h1>
+
+      <div class="system-info">
+        <div class="team-info">
+          <span>TEAM</span>
+          <strong>SEADIVER TEAM</strong>
+        </div>
+
+        <div class="datetime-info">
+          <strong id="currentDay">--</strong>
+          <strong id="currentTime">--:--:--</strong>
+        </div>
+
+        <div class="status-info">
+          <span>SYSTEM STATUS</span>
+          <strong class="badge amber-badge" id="sysStatus">CONNECTING</strong>
+        </div>
+
+        <button class="menu-btn" id="menuBtn" type="button" aria-label="Menu">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+      </div>
+    </header>
+
+    <main class="main-grid">
+
+      <section class="panel camera-panel cam1" data-cam-id="0">
+        <div class="panel-head">
+          <h2><i class="fa-solid fa-camera"></i> CAM 1</h2>
+          <div class="camera-actions">
+            <button class="cam-action capture-btn" type="button" title="Screenshot">
+              <i class="fa-solid fa-camera"></i>
+            </button>
+            <button class="cam-action fullscreen-btn" type="button" title="Fullscreen">
+              <i class="fa-solid fa-expand"></i>
+            </button>
+
+            <div class="zoom-controls">
+              <button class="cam-action zoom-out-btn" type="button" title="Zoom out">
+                <i class="fa-solid fa-magnifying-glass-minus"></i>
+              </button>
+              <span class="zoom-level">1.0x</span>
+              <button class="cam-action zoom-in-btn" type="button" title="Zoom in">
+                <i class="fa-solid fa-magnifying-glass-plus"></i>
+              </button>
+            </div>
+
+            <label class="camera-toggle" title="Nyalakan / matikan kamera">
+              <input type="checkbox" class="cam-toggle" />
+              <span class="toggle-slider"></span>
+              <span class="toggle-text"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="video-box">
+          <div class="video-placeholder"><span>CAMERA FEED 1</span></div>
+          <div class="video-info">
+            <span class="cam-res">-- • --</span>
+            <span class="cam-fps">FPS --</span>
+          </div>
+          <div class="signal" data-state="off"><i class="fa-solid fa-signal"></i></div>
+        </div>
+      </section>
+
+      <section class="panel camera-panel cam2" data-cam-id="1">
+        <div class="panel-head">
+          <h2><i class="fa-solid fa-camera"></i> CAM 2</h2>
+          <div class="camera-actions">
+            <button class="cam-action capture-btn" type="button" title="Screenshot">
+              <i class="fa-solid fa-camera"></i>
+            </button>
+            <button class="cam-action fullscreen-btn" type="button" title="Fullscreen">
+              <i class="fa-solid fa-expand"></i>
+            </button>
+
+            <div class="zoom-controls">
+              <button class="cam-action zoom-out-btn" type="button" title="Zoom out">
+                <i class="fa-solid fa-magnifying-glass-minus"></i>
+              </button>
+              <span class="zoom-level">1.0x</span>
+              <button class="cam-action zoom-in-btn" type="button" title="Zoom in">
+                <i class="fa-solid fa-magnifying-glass-plus"></i>
+              </button>
+            </div>
+
+            <label class="camera-toggle" title="Nyalakan / matikan kamera">
+              <input type="checkbox" class="cam-toggle" />
+              <span class="toggle-slider"></span>
+              <span class="toggle-text"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="video-box">
+          <div class="video-placeholder"><span>CAMERA FEED 2</span></div>
+          <div class="video-info">
+            <span class="cam-res">-- • --</span>
+            <span class="cam-fps">FPS --</span>
+          </div>
+          <div class="signal" data-state="off"><i class="fa-solid fa-signal"></i></div>
+        </div>
+      </section>
+
+      <aside class="panel trajectory-panel">
+        <h2 class="section-title">TRAJECTORY REPLAY</h2>
+
+        <div class="trajectory-graph">
+          <canvas id="trajCanvas"></canvas>
+          <div class="traj-overlay" id="trajInfo">WAITING FOR PIXHAWK…</div>
+          <div class="traj-tools">
+            <button type="button" id="trajClear" title="Clear trajectory">CLR</button>
+            <button type="button" id="trajPause" title="Pause / Resume">⏸</button>
+            <button type="button" id="trajPng"   title="Simpan PNG">PNG</button>
+          </div>
+        </div>
+
+        <div class="trajectory-info">
+          <div><span>TOTAL DIST</span><strong id="trajDist">0.00 m</strong></div>
+          <div><span>MAX DEPTH</span><strong id="trajMaxDepth">0.00 m</strong></div>
+          <div><span>WAYPOINTS</span><strong id="trajPts">0</strong></div>
+        </div>
+      </aside>
+
+      <section class="panel qr-panel">
+        <h2 class="section-title">QR SCANNER</h2>
+
+        <div class="qr-card" id="qrCard" data-state="idle">
+          <div class="qr-box"><i class="fa-solid fa-qrcode"></i></div>
+
+          <div class="qr-result">
+            <span>TARGET ID</span>
+            <strong id="qrTarget">-</strong>
+            <p>SOURCE <b id="qrSource">--</b></p>
+          </div>
+
+          <div class="qr-status">
+            <span>STATUS</span>
+            <strong id="qrStatus"><i class="fa-solid fa-circle-xmark"></i> NOT FOUND</strong>
+          </div>
+
+          <div class="qr-time">
+            <span>TIME</span>
+            <strong id="qrTime">--:--:--</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel rov-design-panel">
+        <h2 class="section-title">ROV DESIGN</h2>
+        <div class="rov-design-card">
+          <div class="rov-body">
+            <div id="rovViewport" class="rov-viewport"></div>
+            <div class="rov-viewport-overlay">
+              <span id="rov3dLink" class="rov3d-badge">
+                <i class="fa-solid fa-satellite-dish"></i> NO LINK
+              </span>
+              <span id="rov3dDepth" class="rov3d-depth">0.00 m</span>
+            </div>
+          </div>
+
+          <div class="rov-specs">
+            <div>
+              <span>CAMERA</span>
+              <strong id="specCamera" data-state="off">OFFLINE</strong>
+            </div>
+            <div>
+              <span>GRIPPER</span>
+              <strong id="specGripper" data-state="off">N/A</strong>
+            </div>
+            <div>
+              <span>THRUSTER</span>
+              <strong id="specThruster" data-state="off">-- PWM</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <h2 class="section-title">DATA LOG / SERIAL CONSOLE</h2>
+        <div class="console" id="consoleLog"></div>
+      </section>
+
+      <section class="panel telemetry-panel">
+        <h2 class="section-title">TELEMETRY</h2>
+
+        <div class="telemetry-grid">
+          <div class="telemetry-card" id="depthCard">
+            <i class="fa-solid fa-water"></i>
+            <span>HEIGHT / DEPTH</span>
+            <strong id="telDepth">-- m</strong>
+            <p>FROM SURFACE</p>
+          </div>
+
+          <div class="telemetry-card">
+            <i class="fa-solid fa-wave-square"></i>
+            <span>PWM SUMMARY</span>
+            <div class="pwm">
+              <p>PWM1 <b data-pwm="1">----</b></p>
+              <p>PWM4 <b data-pwm="4">----</b></p>
+              <p>PWM2 <b data-pwm="2">----</b></p>
+              <p>PWM5 <b data-pwm="5">----</b></p>
+              <p>PWM3 <b data-pwm="3">----</b></p>
+              <p>PWM6 <b data-pwm="6">----</b></p>
+            </div>
+          </div>
+
+          <div class="telemetry-card">
+            <i class="fa-solid fa-bullseye"></i>
+            <span>ATTITUDE</span>
+            <div class="attitude">
+              <p>ROLL  <b id="telRoll">--</b></p>
+              <p>PITCH <b id="telPitch">--</b></p>
+              <p>YAW   <b id="telYaw">--</b></p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel controls-panel">
+        <h2 class="section-title">CONTROLS</h2>
+
+        <div class="control-row">
+          <button class="btn icon-btn record" id="btnRecord" type="button">
+            <i class="fa-solid fa-circle"></i> START RECORD
+          </button>
+
+          <button class="btn icon-btn snapshot" id="btnSnapshot" type="button">
+            <i class="fa-solid fa-camera"></i> Snapshot
+          </button>
+
+          <button class="btn icon-btn replay" id="btnReplay" type="button">
+            <i class="fa-solid fa-video"></i> Replay
+          </button>
+
+          <button class="btn icon-btn reset" id="btnReset" type="button">
+            <i class="fa-solid fa-rotate-left"></i> Reset Session
+          </button>
+
+          <button class="btn icon-btn folder" id="btnFolder" type="button"
+                  title="Pilih folder tempat file rekaman disimpan">
+            <i class="fa-solid fa-folder-open"></i>
+            <span id="folderLabel">Downloads</span>
+          </button>
+
+          <button class="btn alert-small" id="btnDepthAlert" type="button"
+                  aria-pressed="false" title="Aktifkan alarm kedalaman">
+            <i class="fa-solid fa-triangle-exclamation"></i> Depth
+          </button>
+
+          <div class="mode-toggle">
+            <span class="mode-label-text">MODE</span>
+            <button class="mode active" type="button" data-mode="manual">MANUAL</button>
+            <button class="mode" type="button" data-mode="autonomous">AUTONOMOUS</button>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/rov3d.js"></script>
+  <script type="module" src="js/rovTopIcon.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# Package untuk MODE DEV di laptop (tanpa Jetson).
+# Dipasang otomatis oleh 1_INSTALL.bat.
+#
+# JANGAN pasang file ini di Jetson: Jetson memakai OpenCV bawaan JetPack
+# (punya dukungan GStreamer/NVENC). opencv-python dari pip akan menimpanya.
+#
+# pyzbar dan pymavlink sengaja tidak ada di sini: di mode dev, QR dibaca
+# pakai OpenCV dan telemetri berupa simulasi.
+flask>=2.0
+flask-cors>=3.0
+opencv-python>=4.5.3
+numpy

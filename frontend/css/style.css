@@ -135,7 +135,7 @@ body {
   white-space: nowrap;
 }
 
-.menu-btn {
+.setting-btn {
   width: 2.6rem;
   height: 2.6rem;
   border: 1px solid rgba(34, 211, 238, 0.22);
@@ -146,7 +146,7 @@ body {
   font-size: 1rem;
 }
 
-.menu-btn:hover { border-color: rgba(34, 211, 238, 0.55); }
+.setting-btn:hover { border-color: rgba(34, 211, 238, 0.55); }
 
 /* ==================== MAIN GRID ==================== */
 /* Baris 1 (kamera + trajectory) mengambil sisa tinggi; baris 2-3 (QR / telemetry) dan controls mengikuti tinggi isinya. */

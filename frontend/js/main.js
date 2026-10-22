@@ -84,10 +84,6 @@ function bindControls() {
     });
   });
 
-  // Menu (masih kosong)
-  $("menuBtn")?.addEventListener("click", () => {
-    appendLog("[MENU] Belum ada menu.", "warn");
-  });
 }
 
 // ===== Jalankan =====

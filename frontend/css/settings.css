@@ -1,0 +1,514 @@
+/* ./frontend/css/settings.css
+    settings.css - popup PENGATURAN (dibuat oleh js/settings.js) */
+
+/* NOTE:
+  Satuan rem mengikuti skala halaman utama (lihat `html { font-size }` di style.css),
+  jadi popup ikut mengecil di laptop kecil. Warna memakai variabel :root dari style.css.
+  Ukuran: sekitar 70% x 75% layar, dengan batas minimum supaya 1366x768 tetap muat
+  tanpa scroll. Overlay sengaja tipis supaya halaman di belakangnya masih terlihat. */
+
+#settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.st-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(1, 8, 18, 0.55);
+}
+
+.st-box {
+  position: relative;
+  z-index: 1;
+  width: 70vw;
+  height: 75vh;
+  min-width: 48rem;
+  min-height: 30rem;
+  max-width: 96vw;
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(10, 25, 42, 0.98), rgba(5, 14, 27, 0.98));
+  border: 1px solid rgba(34, 211, 238, 0.3);
+  border-radius: 0.75rem;
+  box-shadow: 0 0 2.5rem rgba(0, 0, 0, 0.6);
+  color: var(--text);
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 0.8rem;
+  overflow: hidden;
+}
+
+.st-box button:focus-visible,
+.st-box select:focus-visible,
+.st-box input:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+/* ==================== Header + tab ==================== */
+.st-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0 1rem;
+  height: 3rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.st-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--cyan);
+}
+
+.st-tabs {
+  display: flex;
+  align-self: stretch;
+  gap: 0.25rem;
+}
+
+.st-tab {
+  padding: 0 1.1rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.st-tab:hover  { color: var(--text); }
+.st-tab.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+
+.st-close {
+  margin-left: auto;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.4rem;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: none;
+  color: var(--red);
+  cursor: pointer;
+}
+
+.st-close:hover { background: rgba(239, 68, 68, 0.18); }
+
+/* ==================== Isi tab ==================== */
+.st-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.st-joy {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  overflow-y: auto;
+}
+
+.st-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.st-block {
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.55rem;
+  background: rgba(6, 16, 31, 0.76);
+  border: 1px solid var(--line);
+}
+
+.st-h {
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #cbd5e1;
+}
+
+.st-sub {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* ===== Status ===== */
+.st-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  line-height: 1.35;
+}
+
+.st-status-text { min-width: 0; color: var(--text); }
+.st-status[data-state="off"]   .st-status-text { color: var(--amber); }
+.st-status[data-state="error"] .st-status-text { color: #fca5a5; }
+
+.st-select {
+  min-width: 0;
+  height: 1.8rem;
+  padding: 0 0.4rem;
+  border-radius: 0.35rem;
+  background: #081320;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: var(--text);
+  font-size: 0.75rem;
+}
+
+.st-device { width: 100%; margin-top: 0.5rem; }
+
+/* ===== Batang sumbu (tengah, dua arah) ===== */
+.st-bar {
+  position: relative;
+  height: 0.7rem;
+  border-radius: 0.2rem;
+  background: #081320;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  overflow: hidden;
+}
+
+.st-bar::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(148, 163, 184, 0.5);
+}
+
+.st-bar i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 0;
+  background: var(--sky);
+}
+
+.st-map-row .st-bar i { background: var(--green); }
+
+.st-val {
+  min-width: 2.6rem;
+  text-align: right;
+  font-family: Consolas, monospace;
+  font-size: 0.72rem;
+  color: var(--cyan);
+}
+
+.st-axes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 0.9rem;
+}
+
+.st-axis {
+  display: grid;
+  grid-template-columns: 1.4rem minmax(0, 1fr) 2.6rem;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* ===== Kotak tombol ===== */
+.st-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.st-btn {
+  width: 1.55rem;
+  height: 1.55rem;
+  display: grid;
+  place-items: center;
+  border-radius: 0.3rem;
+  background: #081320;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  color: var(--muted);
+  font-family: Consolas, monospace;
+  font-size: 0.7rem;
+}
+
+.st-btn.on {
+  background: var(--green);
+  border-color: var(--green);
+  color: #04210f;
+  font-weight: 800;
+}
+
+/* ===== Pemetaan ===== */
+.st-map-row {
+  display: grid;
+  grid-template-columns: 7.5rem 6.2rem 4.2rem minmax(2rem, 1fr) 2.6rem;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.st-map-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.st-check {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.st-check input { accent-color: var(--cyan); }
+
+.st-warn {
+  margin-top: 0.2rem;
+  font-size: 0.7rem;
+  color: var(--amber);
+}
+
+/* ===== Kepekaan + kurva ===== */
+.st-tune-row {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr) 2.6rem;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.st-tune-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--cyan);
+  cursor: pointer;
+}
+
+.st-curve {
+  display: block;
+  width: 100%;
+  height: 6rem;
+  margin-top: 0.4rem;
+  border-radius: 0.4rem;
+  background: rgba(1, 8, 18, 0.88);
+  border: 1px solid var(--line);
+}
+
+/* ==================== Footer ==================== */
+.st-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.st-note {
+  margin-right: auto;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.st-dirty {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--amber);
+}
+
+.st-act {
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.85rem;
+  border-radius: 0.4rem;
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.st-act:hover:not(:disabled) { border-color: rgba(34, 211, 238, 0.5); }
+
+.st-act:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.st-primary {
+  background: linear-gradient(135deg, #075985, #2563eb);
+  border-color: transparent;
+  color: #fff;
+}
+
+/* ==================== Tab Thruster ==================== */
+.st-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  color: var(--muted);
+}
+
+.st-placeholder i { font-size: 2rem; color: #475569; margin-bottom: 0.4rem; }
+.st-placeholder p { font-size: 0.85rem; }
+.st-placeholder .st-sub { font-size: 0.75rem; }
+
+/* ==================== Tab Thruster (js/thruster.js) ==================== */
+.th-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.75rem 1rem;
+  overflow-y: auto;
+}
+
+.th-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 0.5rem;
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #fecaca;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.th-banner i { color: var(--red); font-size: 1rem; }
+
+.th-statusrow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.th-statusrow #th-read { margin-left: auto; }
+
+.th-pill {
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: var(--muted);
+}
+
+.th-pill[data-state="ok"]   { color: var(--green); border-color: rgba(34, 197, 94, 0.4); background: rgba(34, 197, 94, 0.1); }
+.th-pill[data-state="warn"] { color: var(--amber); border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.1); }
+.th-pill[data-state="bad"]  { color: #fca5a5;      border-color: rgba(239, 68, 68, 0.45); background: rgba(239, 68, 68, 0.12); }
+
+.th-opt {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+}
+
+.th-opt .st-select { height: 1.6rem; }
+
+.th-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.th-card {
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.55rem;
+  background: rgba(6, 16, 31, 0.76);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.th-card.differs { border-color: rgba(245, 158, 11, 0.7); }
+
+.th-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.85rem;
+}
+
+.th-pwm { font-size: 0.7rem; color: var(--muted); }
+.th-pwm b { font-family: Consolas, monospace; color: var(--cyan); }
+
+.th-dir {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.th-dir[data-state="normal"] { color: var(--green); }
+.th-dir[data-state="rev"]    { color: var(--amber); }
+
+.th-diff {
+  font-size: 0.68rem;
+  color: var(--amber);
+}
+
+.th-card-btns {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.4rem;
+}
+
+.th-test { color: #fcd34d; }
+
+.th-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.th-hist-box .st-h { display: block; margin-bottom: 0.25rem; }
+
+.th-hist {
+  font-family: Consolas, monospace;
+  font-size: 0.68rem;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+.th-hist i { color: var(--muted); font-style: normal; }
+
+.th-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  max-width: 28rem;
+}
+
+.th-msg { min-height: 1.1rem; margin: 0; }
+.th-msg[data-level="ok"]    { color: var(--green); }
+.th-msg[data-level="error"] { color: #fca5a5; }

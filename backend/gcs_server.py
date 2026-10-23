@@ -41,7 +41,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from flask import Flask, Response, jsonify, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 # Mode DEV = jalan di laptop tanpa Jetson (tanpa GStreamer/RTSP, kamera sintetis atau webcam laptop, telemetri simulasi).
@@ -103,6 +103,22 @@ HTTP_PORT = int(os.environ.get("ROV_PORT", "8080"))
 # ===== MAVLink =====
 SERIAL_PORT = "udpin:0.0.0.0:14560"
 BAUD_RATE = 115200
+
+# ===== Pengaturan motor / thruster (tab Thruster di GCS) =====
+# Jalurnya SAMA dengan telemetri: lewat mavlink-routerd (MAVProxy2.py) di endpoint UDP 14560,
+# bukan langsung ke serial Pixhawk (serial hanya boleh dibuka satu proses: router).
+MOTOR_COUNT        = 6
+MOTOR_DIR_PARAM    = "MOT_{n}_DIRECTION"   # 1 = normal, -1 = terbalik. CEK nama ini di firmware ArduSub kalian.
+# Fitur yang MENULIS ke robot (balik arah, uji motor) default MATI. Nyalakan sadar:
+#   ROV_ENABLE_CONTROL=1 python3 gcs_server.py      (di mode DEV otomatis nyala karena hanya simulasi)
+ENABLE_MOTOR_CONFIG    = DEV_MODE or os.environ.get("ROV_ENABLE_CONTROL") == "1"
+MOTOR_TEST_MAX_PERCENT = 30     # batas atas daya uji motor, dipaksa di backend
+MOTOR_TEST_MAX_SECONDS = 3      # batas atas durasi uji motor
+MAV_REPLY_TIMEOUT      = 2.0    # detik menunggu balasan Pixhawk
+# system id backend saat mengirim perintah. Sengaja BUKAN 255 supaya tidak bentrok dengan QGC
+# selama QGC masih dipakai. (Kalau kelak mengirim heartbeat GCS / joystick, putuskan ulang:
+# ArduSub memeriksa SYSID_MYGCS, bawaannya 255.)
+MAV_SOURCE_SYSTEM      = 254
 
 # ===== Model 3D ROV (.glb) =====
 # Diserve lewat /models/<filename> untuk panel "ROV DESIGN".
@@ -191,6 +207,7 @@ state = {
   "pitchspeed": 0.0,
   "yawspeed": 0.0,
   "mavlink_connected": False,
+  "armed": False,
   # qr_data: deteksi TERBARU dari kamera manapun. "camera_id" menunjukkan sumbernya.
   "qr_data": {
     "target_id": "-",
@@ -693,7 +710,47 @@ def _on_servo_output_raw(msg):
   }
 
 
+# ===== Jalur perintah ke Pixhawk (tab Thruster) =====
+_mav_master = None 
+_mav_send_lock = threading.Lock()
+_mav_cmd_lock = threading.Lock() 
+_mav_cond = threading.Condition()
+_params = {}
+_last_ack = {}  
+
+
+class MavCommandError(Exception):
+  """Perintah ke Pixhawk gagal (belum terhubung, tidak ada balasan, ditolak)."""
+
+
+def _on_heartbeat(msg):
+  if msg.autopilot == mavutil.mavlink.MAV_AUTOPILOT_INVALID:
+    return
+  if msg.type == mavutil.mavlink.MAV_TYPE_GCS:
+    return
+  state["armed"] = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+
+
+def _on_param_value(msg):
+  name = msg.param_id
+  if isinstance(name, bytes):
+    name = name.decode("ascii", "ignore")
+  name = name.rstrip("\x00")
+  with _mav_cond:
+    _params[name] = {"value": float(msg.param_value), "type": int(msg.param_type), "t": time.time()}
+    _mav_cond.notify_all()
+
+
+def _on_command_ack(msg):
+  with _mav_cond:
+    _last_ack[int(msg.command)] = {"result": int(msg.result), "t": time.time()}
+    _mav_cond.notify_all()
+
+
 _MAVLINK_HANDLERS = {
+  "HEARTBEAT": _on_heartbeat,
+  "PARAM_VALUE": _on_param_value,
+  "COMMAND_ACK": _on_command_ack,
   "ATTITUDE": _on_attitude,
   "LOCAL_POSITION_NED": _on_local_position_ned,
   "VFR_HUD": _on_vfr_hud,
@@ -709,10 +766,12 @@ def _run_mavlink_once():
   Satu sesi koneksi MAVLink. Keluar normal kalau heartbeat timeout;
   melempar exception kalau koneksi putus (ditangkap mavlink_thread).
   """
-  global _dr_vx, _dr_vy, _dr_last_t
+  global _dr_vx, _dr_vy, _dr_last_t, _mav_master
 
   print(f"[MAVLink] Menghubungkan ke port {SERIAL_PORT}...")
-  master = mavutil.mavlink_connection(SERIAL_PORT, baud=BAUD_RATE)
+  master = mavutil.mavlink_connection(
+    SERIAL_PORT, baud=BAUD_RATE, source_system=MAV_SOURCE_SYSTEM
+  )
   hb = master.wait_heartbeat(timeout=10)
   if hb is None:
     print("[MAVLink] Heartbeat timeout. Mencoba kembali...")
@@ -721,6 +780,7 @@ def _run_mavlink_once():
 
   print(f"[MAVLink] Terhubung! System ID: {master.target_system}")
   state["mavlink_connected"] = True
+  _mav_master = master
 
   def request_message(msg_id, hz):
     master.mav.command_long_send(
@@ -754,14 +814,124 @@ def _run_mavlink_once():
   state["dr_y"] = 0.0
   state["pos_valid"] = False
 
-  while True:
-    msg = master.recv_match(blocking=False)
-    if msg is None:
-      time.sleep(0.001)
-      continue
-    handler = _MAVLINK_HANDLERS.get(msg.get_type())
-    if handler:
-      handler(msg)
+  try:
+    while True:
+      msg = master.recv_match(blocking=False)
+      if msg is None:
+        time.sleep(0.001)
+        continue
+      handler = _MAVLINK_HANDLERS.get(msg.get_type())
+      if handler:
+        handler(msg)
+  finally:
+    _mav_master = None
+
+
+# ===== 6c. Perintah ke Pixhawk: baca/tulis parameter, uji motor =====
+# Simulasi DEV: parameter palsu supaya tab Thruster bisa dites tanpa robot.
+_dev_params = {
+  MOTOR_DIR_PARAM.format(n=n): {"value": 1.0, "type": 2, "t": 0.0}
+  for n in range(1, MOTOR_COUNT + 1)
+}
+_dev_motor_test = {"motor": 0, "until": 0.0, "percent": 0.0}
+
+
+def _require_master():
+  master = _mav_master
+  if master is None:
+    raise MavCommandError("Pixhawk belum terhubung")
+  return master
+
+
+def _wait_param(name, since, timeout):
+  """Tunggu PARAM_VALUE untuk `name` yang diterima setelah waktu `since`."""
+  deadline = time.time() + timeout
+  with _mav_cond:
+    while True:
+      p = _params.get(name)
+      if p and p["t"] >= since:
+        return dict(p)
+      remaining = deadline - time.time()
+      if remaining <= 0:
+        raise MavCommandError(f"Pixhawk tidak membalas ({name})")
+      _mav_cond.wait(remaining)
+
+
+def mav_param_read(name, timeout=MAV_REPLY_TIMEOUT):
+  if DEV_MODE:
+    p = _dev_params.get(name)
+    if p is None:
+      raise MavCommandError(f"Parameter {name} tidak ada (simulasi)")
+    return {**p, "t": time.time()}
+  master = _require_master()
+  t_sent = time.time()
+  with _mav_send_lock:
+    master.mav.param_request_read_send(
+      master.target_system, master.target_component, name.encode("ascii"), -1
+    )
+  return _wait_param(name, t_sent, timeout)
+
+
+def mav_param_write(name, value, timeout=MAV_REPLY_TIMEOUT):
+  """
+  Tulis parameter, lalu BACA ULANG dari Pixhawk. Mengembalikan (nilai_lama, nilai_baru_hasil_baca_ulang).
+  Pemanggil yang membandingkan nilai_baru dengan yang diminta; jangan percaya "terkirim" saja.
+  """
+  old = mav_param_read(name, timeout)
+  if DEV_MODE:
+    time.sleep(0.2)
+    _dev_params[name]["value"] = float(value)
+    return old["value"], float(value)
+  master = _require_master()
+  t_sent = time.time()
+  with _mav_send_lock:
+    master.mav.param_set_send(
+      master.target_system, master.target_component,
+      name.encode("ascii"), float(value), old["type"],
+    )
+  _wait_param(name, t_sent, timeout) 
+  new = mav_param_read(name, timeout)
+  return old["value"], new["value"]
+
+
+def mav_motor_test(motor, percent, seconds, timeout=MAV_REPLY_TIMEOUT):
+  """Putar SATU motor sebentar (MAV_CMD_DO_MOTOR_TEST). Nilai dibatasi di sini, bukan percaya browser."""
+  percent = max(1, min(MOTOR_TEST_MAX_PERCENT, int(percent)))
+  seconds = max(1, min(MOTOR_TEST_MAX_SECONDS, int(seconds)))
+
+  if DEV_MODE:
+    _dev_motor_test.update(motor=motor, until=time.time() + seconds, percent=percent)
+    return {"result": 0, "result_text": "ACCEPTED (simulasi)", "percent": percent, "seconds": seconds}
+
+  master = _require_master()
+  CMD = mavutil.mavlink.MAV_CMD_DO_MOTOR_TEST
+  t_sent = time.time()
+  with _mav_send_lock:
+    master.mav.command_long_send(
+      master.target_system, master.target_component, CMD, 0,
+      motor,       # p1: nomor motor (mulai 1)
+      0,           # p2: jenis throttle 0 = persen
+      percent,     # p3: nilai
+      seconds,     # p4: durasi detik
+      1,           # p5: jumlah motor di Test berurutan
+      0,           # p6: urutan Test (default)
+      0,
+    )
+  deadline = t_sent + timeout
+  with _mav_cond:
+    while True:
+      ack = _last_ack.get(int(CMD))
+      if ack and ack["t"] >= t_sent:
+        break
+      remaining = deadline - time.time()
+      if remaining <= 0:
+        raise MavCommandError("Pixhawk tidak membalas perintah uji motor")
+      _mav_cond.wait(remaining)
+  try:
+    text = mavutil.mavlink.enums["MAV_RESULT"][ack["result"]].name
+  except Exception:
+    text = str(ack["result"])
+  return {"result": ack["result"], "result_text": text, "percent": percent, "seconds": seconds}
 
 
 def _fallback_simulation_loop():
@@ -830,6 +1000,13 @@ def _dev_telemetry_loop():
 
     for i in range(1, 7):
       state["pwm"][f"PWM{i}"] = round(1500 + 30 * math.sin(now + i))
+
+    # Simulasi uji motor: PWM motor itu naik/turun sesuai arah (MOT_n_DIRECTION) selama uji.
+    test = _dev_motor_test
+    if now < test["until"] and 1 <= test["motor"] <= 6:
+      direction = _dev_params[MOTOR_DIR_PARAM.format(n=test["motor"])]["value"]
+      state["pwm"][f"PWM{test['motor']}"] = round(1500 + 4 * test["percent"] * direction)
+    state["armed"] = False
 
 
 def mavlink_thread():
@@ -1323,6 +1500,89 @@ def zoom_out_default():
   return zoom_out(0)
 
 
+# ===== Pengaturan motor (tab Thruster) =====
+def _json_error(message, code):
+  return jsonify({"ok": False, "error": message}), code
+
+
+def _control_guard():
+  """Penjaga fitur yang MENULIS ke robot. Mengembalikan response error, atau None kalau boleh lanjut."""
+  if not ENABLE_MOTOR_CONFIG:
+    return _json_error("Kontrol dimatikan di backend. Jalankan backend dengan ROV_ENABLE_CONTROL=1.", 403)
+  if state.get("armed"):
+    return _json_error("Robot sedang ARMED. Disarm dulu sebelum mengubah / menguji motor.", 409)
+  return None
+
+
+@app.route("/motors/directions")
+def motors_directions():
+  """Baca arah putar semua motor dari Pixhawk (aman: hanya membaca)."""
+  motors = []
+  with _mav_cmd_lock:
+    for n in range(1, MOTOR_COUNT + 1):
+      name = MOTOR_DIR_PARAM.format(n=n)
+      try:
+        value = int(round(mav_param_read(name)["value"]))
+        motors.append({"n": n, "param": name, "value": value})
+      except MavCommandError as e:
+        motors.append({"n": n, "param": name, "value": None, "error": str(e)})
+  return jsonify({
+    "ok": True,
+    "control_enabled": ENABLE_MOTOR_CONFIG,
+    "armed": bool(state.get("armed")),
+    "connected": bool(state.get("mavlink_connected")),
+    "motors": motors,
+  })
+
+
+@app.route("/motors/<int:n>/direction", methods=["POST"])
+def motor_set_direction(n):
+  if not 1 <= n <= MOTOR_COUNT:
+    return _json_error(f"Motor {n} tidak dikenal", 404)
+  direction = (request.get_json(silent=True) or {}).get("direction")
+  if direction not in (1, -1):
+    return _json_error("direction harus 1 (normal) atau -1 (terbalik)", 400)
+  guard = _control_guard()
+  if guard:
+    return guard
+
+  name = MOTOR_DIR_PARAM.format(n=n)
+  with _mav_cmd_lock:
+    try:
+      old, new = mav_param_write(name, direction)
+    except MavCommandError as e:
+      return _json_error(str(e), 502)
+  verified = int(round(new)) == direction
+  print(f"[MAVLink] {name}: {old:g} -> {new:g} (diminta {direction}, {'TERBUKTI' if verified else 'GAGAL'})")
+  return jsonify({"ok": True, "n": n, "param": name,
+                  "old": int(round(old)), "new": int(round(new)), "verified": verified})
+
+
+@app.route("/motors/<int:n>/test", methods=["POST"])
+def motor_test(n):
+  if not 1 <= n <= MOTOR_COUNT:
+    return _json_error(f"Motor {n} tidak dikenal", 404)
+  body = request.get_json(silent=True) or {}
+  try:
+    percent = int(body.get("percent", 10))
+    seconds = int(body.get("seconds", 2))
+  except (TypeError, ValueError):
+    return _json_error("percent dan seconds harus angka", 400)
+  guard = _control_guard()
+  if guard:
+    return guard
+
+  with _mav_cmd_lock:
+    try:
+      res = mav_motor_test(n, percent, seconds)
+    except MavCommandError as e:
+      return _json_error(str(e), 502)
+  print(f"[MAVLink] Uji motor {n}: {res['percent']}% {res['seconds']}s -> {res['result_text']}")
+  if res["result"] != 0:
+    return _json_error(f"Pixhawk menolak uji motor ({res['result_text']})", 409)
+  return jsonify({"ok": True, "n": n, **res})
+
+
 # ===== Telemetri, model 3D, status =====
 @app.route("/telemetry")
 def get_telemetry():
@@ -1340,6 +1600,7 @@ def get_telemetry():
       "dr_x": float(state.get("dr_x", 0.0)),
       "dr_y": float(state.get("dr_y", 0.0)),
       "pos_valid": bool(state.get("pos_valid", False)),
+      "armed": bool(state.get("armed", False)),
       "qr_data": state.get("qr_data"),
       "pwm": state.get("pwm", {}),
       # indikator LIVE / NO LINK di panel ROV DESIGN

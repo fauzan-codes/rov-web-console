@@ -43,6 +43,9 @@ let lastTelemetryLog = 0;
 let depthAlarmArmed = false;
 let depthAlarmActive = false;
 let lastSystemState = "";
+let lastData = null;
+
+export const getLastTelemetry = () => lastData;
 
 
 // ==================== Status sistem (header + brand) ====================
@@ -151,6 +154,7 @@ function applyTelemetry(d) {
     appendLog("[SYS] Backend tersambung kembali.");
   }
 
+  lastData = d;
   const yaw = Number.isFinite(d.yaw) ? d.yaw : 0;
 
   // Panel TELEMETRY

@@ -23,6 +23,8 @@ import { openReplayModal } from "./replay.js";
 import { newSession, getSessionId } from "./session.js";
 import { pickSaveFolder, onFolderChange, getFolderName, isFolderPickerSupported } from "./storage.js";
 import { $ } from "./util.js";
+import { initSettings } from "./settings.js";
+import { startJoystick } from "./joystick.js";
 
 // ==== RESET SESSION =====
 function resetSession() {
@@ -93,6 +95,8 @@ initTrajectory();
 bindControls();
 startStatusPolling();
 startTelemetry();
+startJoystick();
+initSettings();
 
 appendLog(`GCS online — backend: ${BACKEND_URL}`);
 appendLog(`Sesi: ROV_${getSessionId()}__*`);

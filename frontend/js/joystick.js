@@ -3,11 +3,9 @@
 
 //  NOTE:
 //  TAHAP 1: modul ini HANYA MEMBACA. Tidak ada yang dikirim ke backend atau robot.
-//  Tahap 2 nanti memakai processAxes() dari sini supaya nilai yang dikirim ke robot
-//  sama persis dengan yang dilihat operator di popup Pengaturan.
+//  Tahap 2 nanti memakai processAxes() dari sini supaya nilai yang dikirim ke robot sama persis dengan yang dilihat operator di popup Pengaturan.
 //
-//  Pengaturan disimpan di localStorage, jadi hanya berlaku untuk browser + alamat
-//  halaman yang sama (localhost dan 127.0.0.1 dianggap berbeda oleh browser).
+//  Pengaturan disimpan di localStorage, jadi hanya berlaku untuk browser + alamat halaman yang sama (localhost dan 127.0.0.1 dianggap berbeda oleh browser).
 //  Pindah laptop = pakai Ekspor / Impor di popup.
 
 

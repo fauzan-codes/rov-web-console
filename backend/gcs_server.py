@@ -114,6 +114,19 @@ MOTOR_DIR_PARAM    = "MOT_{n}_DIRECTION"   # 1 = normal, -1 = terbalik. CEK nama
 ENABLE_MOTOR_CONFIG    = DEV_MODE or os.environ.get("ROV_ENABLE_CONTROL") == "1"
 MOTOR_TEST_MAX_PERCENT = 30     # batas atas daya uji motor, dipaksa di backend
 MOTOR_TEST_MAX_SECONDS = 3      # batas atas durasi uji motor
+# MAV_CMD_DO_MOTOR_TEST di ArduSub (ArduSub/motors.cpp, "new style motor test"):
+#   - p6 WAJIB = MOTOR_TEST_ORDER_BOARD (2). Kalau 0 -> STATUSTEXT "bad test type 0.00" (itu isi p6, bukan p2).
+#   - Perintah harus DIKIRIM ULANG minimal 2 Hz (jeda > 500 ms -> "Motor test timed out!" -> Pixhawk DISARM sendiri).
+#   - Robot harus ARMED dan safety switch hardware (kalau ada) tidak aktif.
+#   - Setelah test selesai Pixhawk disarm sendiri + cooldown 10 detik sebelum test berikutnya.
+MOTOR_TEST_ORDER_BOARD = 2
+MOTOR_TEST_RESEND_HZ   = 10     # frekuensi kirim ulang (minimal 2 Hz)
+MOTOR_TEST_COOLDOWN    = 10.0   # detik, aturan firmware setelah test selesai
+# Nomor motor yang dikirim = n - MOTOR_TEST_INDEX_BASE. Bawaan 1 -> kirim n-1 (0 = Motor 1).
+# Kalau Motor 1 di web malah memutar motor 2, set env ROV_MOTOR_TEST_INDEX_BASE=0 (kirim n apa adanya).
+MOTOR_TEST_INDEX_BASE  = int(os.environ.get("ROV_MOTOR_TEST_INDEX_BASE", "1"))
+MOTOR_TEST_PWM_NEUTRAL = 1500   # us, motor diam
+MOTOR_TEST_PWM_PER_PCT = 4      # 100% = +400 us (1500 -> 1900). Kebanyakan ESC thruster: 1100-1900
 MAV_REPLY_TIMEOUT      = 2.0    # detik menunggu balasan Pixhawk
 # system id backend saat mengirim perintah. Sengaja BUKAN 255 supaya tidak bentrok dengan QGC
 # selama QGC masih dipakai. (Kalau kelak mengirim heartbeat GCS / joystick, putuskan ulang:
@@ -747,7 +760,27 @@ def _on_command_ack(msg):
     _mav_cond.notify_all()
 
 
+_statustext = []
+
+def _on_statustext(msg):
+  text = msg.text
+  if isinstance(text, bytes):
+    text = text.decode("utf-8", "ignore")
+  text = text.rstrip("\x00").strip()
+  with _mav_cond:
+    _statustext.append((time.time(), int(msg.severity), text))
+    del _statustext[:-30]          # simpan 30 terakhir saja
+  print(f"[Pixhawk] {text}")
+
+
+def recent_statustext(since):
+  """Teks STATUSTEXT yang diterima setelah waktu `since`, digabung jadi satu string."""
+  with _mav_cond:
+    return " | ".join(t for (ts, _sev, t) in _statustext if ts >= since)
+
+
 _MAVLINK_HANDLERS = {
+  "STATUSTEXT": _on_statustext,
   "HEARTBEAT": _on_heartbeat,
   "PARAM_VALUE": _on_param_value,
   "COMMAND_ACK": _on_command_ack,
@@ -894,27 +927,23 @@ def mav_param_write(name, value, timeout=MAV_REPLY_TIMEOUT):
   return old["value"], new["value"]
 
 
-def mav_motor_test(motor, percent, seconds, timeout=MAV_REPLY_TIMEOUT):
-  """Putar SATU motor sebentar (MAV_CMD_DO_MOTOR_TEST). Nilai dibatasi di sini, bukan percaya browser."""
-  percent = max(1, min(MOTOR_TEST_MAX_PERCENT, int(percent)))
-  seconds = max(1, min(MOTOR_TEST_MAX_SECONDS, int(seconds)))
+_motor_test_last_end = 0.0   # kapan test terakhir selesai (untuk cooldown 10 detik)
 
-  if DEV_MODE:
-    _dev_motor_test.update(motor=motor, until=time.time() + seconds, percent=percent)
-    return {"result": 0, "result_text": "ACCEPTED (simulasi)", "percent": percent, "seconds": seconds}
 
+def _motor_test_send(motor, pwm, seconds, timeout):
+  """Kirim SATU paket DO_MOTOR_TEST (mode PWM) dan tunggu ACK. Mengembalikan (result, result_text, pixhawk_text)."""
   master = _require_master()
   CMD = mavutil.mavlink.MAV_CMD_DO_MOTOR_TEST
   t_sent = time.time()
   with _mav_send_lock:
     master.mav.command_long_send(
       master.target_system, master.target_component, CMD, 0,
-      motor,       # p1: nomor motor (mulai 1)
-      0,           # p2: jenis throttle 0 = persen
-      percent,     # p3: nilai
-      seconds,     # p4: durasi detik
-      1,           # p5: jumlah motor di Test berurutan
-      0,           # p6: urutan Test (default)
+      motor - MOTOR_TEST_INDEX_BASE,      # p1: nomor motor
+      mavutil.mavlink.MOTOR_TEST_THROTTLE_PWM,  # p2: jenis throttle = PWM (us)
+      pwm,                                # p3: nilai PWM
+      seconds,                            # p4: durasi (Sub mengabaikan; kita yang mengatur lewat kirim ulang)
+      1,                                  # p5: jumlah motor (diabaikan Sub)
+      MOTOR_TEST_ORDER_BOARD,             # p6: WAJIB 2, kalau tidak -> "bad test type"
       0,
     )
   deadline = t_sent + timeout
@@ -931,7 +960,56 @@ def mav_motor_test(motor, percent, seconds, timeout=MAV_REPLY_TIMEOUT):
     text = mavutil.mavlink.enums["MAV_RESULT"][ack["result"]].name
   except Exception:
     text = str(ack["result"])
-  return {"result": ack["result"], "result_text": text, "percent": percent, "seconds": seconds}
+  if ack["result"] != 0:
+    time.sleep(0.3)   # STATUSTEXT penjelasan sering tiba sesaat setelah ACK
+  return ack["result"], text, recent_statustext(t_sent)
+
+
+def mav_motor_test(motor, percent, seconds, timeout=MAV_REPLY_TIMEOUT):
+  """Putar SATU motor sebentar. Nilai dibatasi di sini, bukan percaya browser.
+
+  ArduSub butuh perintah dikirim ULANG terus (>= 2 Hz) selama motor berputar, jadi fungsi ini
+  mengirim tiap 1/MOTOR_TEST_RESEND_HZ detik selama `seconds`, lalu kirim netral (1500) dan berhenti.
+  Setelah itu Pixhawk disarm sendiri (perilaku firmware) dan menolak test baru selama ~10 detik.
+  """
+  global _motor_test_last_end
+  percent = max(1, min(MOTOR_TEST_MAX_PERCENT, int(percent)))
+  seconds = max(1, min(MOTOR_TEST_MAX_SECONDS, int(seconds)))
+
+  if DEV_MODE:
+    _dev_motor_test.update(motor=motor, until=time.time() + seconds, percent=percent)
+    return {"result": 0, "result_text": "ACCEPTED (simulasi)", "percent": percent,
+            "seconds": seconds, "pixhawk_text": "", "test_type": "simulasi"}
+
+  wait = _motor_test_last_end + MOTOR_TEST_COOLDOWN - time.time()
+  if wait > 0:
+    raise MavCommandError(f"Cooldown firmware: tunggu {wait:.0f} detik lagi, lalu ARM ulang (Pixhawk disarm sendiri setelah test)")
+
+  pwm = MOTOR_TEST_PWM_NEUTRAL + percent * MOTOR_TEST_PWM_PER_PCT
+  period = 1.0 / MOTOR_TEST_RESEND_HZ
+  t_start = time.time()
+  last = None
+  try:
+    while time.time() - t_start < seconds:
+      result, text, px = _motor_test_send(motor, pwm, seconds, timeout)
+      last = {"result": result, "result_text": text, "percent": percent, "seconds": seconds,
+              "pixhawk_text": px, "test_type": "pwm"}
+      if result != 0:
+        print(f"[MAVLink] Uji motor {motor}: pwm={pwm} -> {text} | {px}")
+        return last          # ditolak: berhenti, jangan kirim ulang
+      time.sleep(period)
+    print(f"[MAVLink] Uji motor {motor}: pwm={pwm} selama {seconds}s -> OK")
+  finally:
+    if last is not None and last["result"] == 0:
+      # akhiri dengan netral beberapa kali, setelah itu berhenti kirim (firmware akan disarm sendiri)
+      for _ in range(3):
+        try:
+          _motor_test_send(motor, MOTOR_TEST_PWM_NEUTRAL, 1, 0.5)
+        except MavCommandError:
+          pass
+        time.sleep(period)
+    _motor_test_last_end = time.time()
+  return last
 
 
 def _fallback_simulation_loop():
@@ -1006,7 +1084,7 @@ def _dev_telemetry_loop():
     if now < test["until"] and 1 <= test["motor"] <= 6:
       direction = _dev_params[MOTOR_DIR_PARAM.format(n=test["motor"])]["value"]
       state["pwm"][f"PWM{test['motor']}"] = round(1500 + 4 * test["percent"] * direction)
-    state["armed"] = False
+    state["armed"] = os.environ.get("ROV_DEV_ARMED") == "1"
 
 
 def mavlink_thread():
@@ -1501,16 +1579,19 @@ def zoom_out_default():
 
 
 # ===== Pengaturan motor (tab Thruster) =====
-def _json_error(message, code):
-  return jsonify({"ok": False, "error": message}), code
+def _json_error(message, code, **extra):
+  return jsonify({"ok": False, "error": message, **extra}), code
 
 
-def _control_guard():
-  """Penjaga fitur yang MENULIS ke robot. Mengembalikan response error, atau None kalau boleh lanjut."""
+def _control_guard(require_armed):
+  """require_armed=True untuk uji motor, False untuk ubah parameter."""
   if not ENABLE_MOTOR_CONFIG:
     return _json_error("Kontrol dimatikan di backend. Jalankan backend dengan ROV_ENABLE_CONTROL=1.", 403)
-  if state.get("armed"):
-    return _json_error("Robot sedang ARMED. Disarm dulu sebelum mengubah / menguji motor.", 409)
+  armed = bool(state.get("armed"))
+  if require_armed and not armed:
+    return _json_error("Robot belum ARMED. Arm dulu — uji motor hanya jalan saat ARMED.", 409)
+  if not require_armed and armed:
+    return _json_error("Robot sedang ARMED. Disarm dulu sebelum mengubah arah motor.", 409)
   return None
 
 
@@ -1542,7 +1623,7 @@ def motor_set_direction(n):
   direction = (request.get_json(silent=True) or {}).get("direction")
   if direction not in (1, -1):
     return _json_error("direction harus 1 (normal) atau -1 (terbalik)", 400)
-  guard = _control_guard()
+  guard = _control_guard(require_armed=False)
   if guard:
     return guard
 
@@ -1568,7 +1649,7 @@ def motor_test(n):
     seconds = int(body.get("seconds", 2))
   except (TypeError, ValueError):
     return _json_error("percent dan seconds harus angka", 400)
-  guard = _control_guard()
+  guard = _control_guard(require_armed=True)
   if guard:
     return guard
 
@@ -1578,8 +1659,10 @@ def motor_test(n):
     except MavCommandError as e:
       return _json_error(str(e), 502)
   print(f"[MAVLink] Uji motor {n}: {res['percent']}% {res['seconds']}s -> {res['result_text']}")
+  if res["result"] == 0:
+    res["cooldown"] = MOTOR_TEST_COOLDOWN  # frontend: Pixhawk disarm sendiri, tunggu sebelum test lagi
   if res["result"] != 0:
-    return _json_error(f"Pixhawk menolak uji motor ({res['result_text']})", 409)
+    return _json_error(f"Pixhawk menolak uji motor ({res['result_text']})", 409, pixhawk_text=res["pixhawk_text"])
   return jsonify({"ok": True, "n": n, **res})
 
 

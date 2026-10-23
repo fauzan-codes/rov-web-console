@@ -2,14 +2,11 @@
 //  settings.js - popup PENGATURAN (tombol gerigi di header). Tab: JOYSTICK dan THRUSTER (isinya di thruster.js).
 
 //  NOTE:
-//  Popup ini modal di halaman yang SAMA (bukan window baru). Alasannya: Gamepad API hanya
-//  aktif untuk halaman yang sedang fokus, dan halaman utama (kamera, telemetri, rekaman)
-//  tetap berjalan di belakangnya.
+//  Popup ini modal di halaman yang SAMA (bukan window baru). 
+// Alasannya: Gamepad API hanya aktif untuk halaman yang sedang fokus, dan halaman utama (kamera, telemetri, rekaman) tetap berjalan di belakangnya.
 //
-//  Perubahan di popup disimpan sebagai "draft" dulu. Baru berlaku permanen setelah
-//  tombol Simpan; kalau popup ditutup tanpa Simpan, draft dibuang.
-//  TAHAP 1: tidak ada yang dikirim ke robot, popup hanya membaca joystick.
-//  Gaya ada di css/settings.css.
+//  Perubahan di popup disimpan sebagai "draft" dulu. Baru berlaku permanen setelah tombol Simpan; kalau popup ditutup tanpa Simpan, draft dibuang.
+//  TAHAP 1: tidak ada yang dikirim ke robot, popup hanya membaca joystick. Gaya ada di css/settings.css.
 
 
 import { appendLog } from "./logger.js";

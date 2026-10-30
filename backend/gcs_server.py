@@ -43,6 +43,7 @@ import cv2
 import numpy as np
 from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_cors import CORS
+import rov_control
 
 # Mode DEV = jalan di laptop tanpa Jetson (tanpa GStreamer/RTSP, kamera sintetis atau webcam laptop, telemetri simulasi).
 DEV_MODE = ("--dev" in sys.argv) or (os.environ.get("ROV_DEV") == "1")
@@ -128,10 +129,10 @@ MOTOR_TEST_INDEX_BASE  = int(os.environ.get("ROV_MOTOR_TEST_INDEX_BASE", "1"))
 MOTOR_TEST_PWM_NEUTRAL = 1500   # us, motor diam
 MOTOR_TEST_PWM_PER_PCT = 4      # 100% = +400 us (1500 -> 1900). Kebanyakan ESC thruster: 1100-1900
 MAV_REPLY_TIMEOUT      = 2.0    # detik menunggu balasan Pixhawk
-# system id backend saat mengirim perintah. Sengaja BUKAN 255 supaya tidak bentrok dengan QGC
-# selama QGC masih dipakai. (Kalau kelak mengirim heartbeat GCS / joystick, putuskan ulang:
-# ArduSub memeriksa SYSID_MYGCS, bawaannya 255.)
-MAV_SOURCE_SYSTEM      = 254
+# system id backend = 255 (sama dengan QGC). ArduSub HANYA menerima MANUAL_CONTROL dan heartbeat GCS
+# dari system id = SYSID_MYGCS (bawaan 255). Akibatnya QGC (joystick-nya) harus MATI saat nyetir
+# dari GCS web, dan sebaiknya ditutup juga saat uji motor.
+MAV_SOURCE_SYSTEM      = int(os.environ.get("ROV_MAV_SYSID", "255"))
 
 # ===== Model 3D ROV (.glb) =====
 # Diserve lewat /models/<filename> untuk panel "ROV DESIGN".
@@ -742,6 +743,7 @@ def _on_heartbeat(msg):
   if msg.type == mavutil.mavlink.MAV_TYPE_GCS:
     return
   state["armed"] = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+  state["custom_mode"] = int(msg.custom_mode)
 
 
 def _on_param_value(msg):
@@ -1084,7 +1086,6 @@ def _dev_telemetry_loop():
     if now < test["until"] and 1 <= test["motor"] <= 6:
       direction = _dev_params[MOTOR_DIR_PARAM.format(n=test["motor"])]["value"]
       state["pwm"][f"PWM{test['motor']}"] = round(1500 + 4 * test["percent"] * direction)
-    state["armed"] = os.environ.get("ROV_DEV_ARMED") == "1"
 
 
 def mavlink_thread():
@@ -1587,6 +1588,8 @@ def _control_guard(require_armed):
   """require_armed=True untuk uji motor, False untuk ubah parameter."""
   if not ENABLE_MOTOR_CONFIG:
     return _json_error("Kontrol dimatikan di backend. Jalankan backend dengan ROV_ENABLE_CONTROL=1.", 403)
+  if rov_control.is_active():
+    return _json_error("Matikan Drive Control dulu sebelum Test / Reverse motor.", 409)
   armed = bool(state.get("armed"))
   if require_armed and not armed:
     return _json_error("Robot belum ARMED. Arm dulu — uji motor hanya jalan saat ARMED.", 409)
@@ -1736,6 +1739,17 @@ def status():
   )
 
 
+rov_control.init(
+  app,
+  get_master=lambda: _mav_master,
+  send_lock=_mav_send_lock, cmd_lock=_mav_cmd_lock,
+  cond=_mav_cond, last_ack=_last_ack,
+  state=state, statustext_since=recent_statustext,
+  enabled=ENABLE_MOTOR_CONFIG, dev_mode=DEV_MODE,
+  mavutil=globals().get("mavutil"), sysid=MAV_SOURCE_SYSTEM,
+)
+
+
 # ==================== 12. MAIN ====================
 if __name__ == "__main__":
   print("=" * 50)
@@ -1753,4 +1767,5 @@ if __name__ == "__main__":
   print("=" * 50)
 
   start_background_services()
+  rov_control.start()
   app.run(host="0.0.0.0", port=HTTP_PORT, debug=False, threaded=True)

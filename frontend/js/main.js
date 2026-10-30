@@ -25,6 +25,7 @@ import { pickSaveFolder, onFolderChange, getFolderName, isFolderPickerSupported 
 import { $ } from "./util.js";
 import { initSettings } from "./settings.js";
 import { startJoystick } from "./joystick.js";
+import { initControl } from "./control.js";
 
 // ==== RESET SESSION =====
 function resetSession() {
@@ -97,6 +98,7 @@ startStatusPolling();
 startTelemetry();
 startJoystick();
 initSettings();
+initControl();
 
 appendLog(`GCS online — backend: ${BACKEND_URL}`);
 appendLog(`Sesi: ROV_${getSessionId()}__*`);

@@ -1717,14 +1717,11 @@ def status():
       "video": {
         "protocol": "rtsp",
         "rtsp_urls": {str(c): rtsp_url_for(c) for c in CAM_MAPPING},
-        # Resolusi/fps yang DIMINTA (dari CAM_CONFIG)
         "resolution": {
           str(c): f"{cam_cfg(c)['width']}x{cam_cfg(c)['height']}"
           for c in CAM_MAPPING
         },
         "fps": {str(c): cam_cfg(c)["fps"] for c in CAM_MAPPING},
-        # FPS yang BENAR-BENAR terukur dari hardware; 
-        # null kalau grabber kamera itu belum pernah dijalankan (belum POST /start_cameras)
         "measured_fps": {
           str(c): (round(_grabbers[c].measured_fps,1) if c in _grabbers else None)
           for c in CAM_MAPPING
@@ -1747,6 +1744,7 @@ rov_control.init(
   state=state, statustext_since=recent_statustext,
   enabled=ENABLE_MOTOR_CONFIG, dev_mode=DEV_MODE,
   mavutil=globals().get("mavutil"), sysid=MAV_SOURCE_SYSTEM,
+  param_read=mav_param_read, param_write=mav_param_write, param_error=MavCommandError,
 )
 
 

@@ -1,0 +1,23 @@
+{
+  "axes": {
+    "surge": {
+      "axis": 1,
+      "invert": true
+    },
+    "sway": {
+      "axis": 2,
+      "invert": false
+    },
+    "heave": {
+      "axis": 3,
+      "invert": true
+    },
+    "yaw": {
+      "axis": 0,
+      "invert": false
+    }
+  },
+  "deadzone": 0.05,
+  "expo": 0.0,
+  "gain": 1.0
+}

@@ -3,66 +3,76 @@
 //  Enable/Disable Control, STOP, ARM/DISARM, pilih mode, bar nilai joystick, dan status tombol joystick.
 
 //  NOTE:
-//  Alur: joystick (Gamepad API) -> processAxes() (joystick.js, pengaturan SIMPAN dari popup Settings)
-//        -> POST /control/axes 20 Hz -> backend (rov_control.py) -> MANUAL_CONTROL -> Pixhawk.
-//  Nilai yang dikirim SAMA dengan yang dilihat operator di popup Settings (kolom kanan "Pemetaan sumbu").
-//  Ingat: perubahan pemetaan baru berlaku setelah tombol Simpan di popup.
+//  DUA SUMBER INPUT (dipilih otomatis saat Enable Control):
+//    1. BRIDGE  (disarankan) : tools/joystick_bridge.py di laptop membaca joystick lewat SDL (seperti QGC).
+//                              Tidak terpengaruh tab / fokus: buka terminal atau tab lain, joystick tetap jalan.
+//                              Dashboard hanya Enable / STOP / ARM / mode / monitoring.
+//    2. BROWSER (cadangan)   : Gamepad API. Browser membekukan data joystick saat tab disembunyikan, jadi
+//                              di mode ini control otomatis OFF kalau tab disembunyikan / jendela kehilangan fokus.
+//
+//  Pengaturan joystick (mapping, deadband, expo, gain) disimpan di popup Settings, lalu DIKIRIM otomatis
+//  ke backend (/control/config) supaya bridge memakai pengaturan yang sama.
 //
 //  TOMBOL JOYSTICK:
-//    Fungsi tiap tombol (arm, disarm, mode_manual, shift, gain_inc, dst.) TIDAK disimpan di web,
-//    tapi di PIXHAWK (parameter BTNn_FUNCTION / BTNn_SFUNCTION) - itu yang diatur QGC di halaman Joystick.
-//    Web cukup mengirim "tombol nomor berapa yang sedang ditekan" (bitmask 16-bit di MANUAL_CONTROL),
-//    jadi selama NOMOR tombolnya sama dengan QGC, perilakunya otomatis sama (termasuk Shift).
-//    Nomor tombol browser bisa beda dengan QGC (Gamepad API vs SDL). Kalau beda, isi peta dari Console:
-//      localStorage.setItem("rov.buttonMap", JSON.stringify([...]))   // isi[nomorBrowser] = nomorQGC
-//      localStorage.removeItem("rov.buttonMap")                       // kembali ke bawaan (sama persis)
-//    Cek nomornya lewat deretan kotak "Buttons" di panel DRIVE (menyala saat tombol ditekan).
+//    Fungsi tiap tombol (arm, disarm, mode_manual, shift, gain_inc, dst.) disimpan di PIXHAWK
+//    (BTNn_FUNCTION / BTNn_SFUNCTION) - itu yang diatur QGC di halaman Joystick. Web cuma mengirim
+//    "tombol nomor berapa yang sedang ditekan". Nomor yang dipakai = nomor di QGC (urutan SDL GameController).
+//    Bridge sudah memakai urutan itu. Mode browser menerjemahkan urutan Gamepad API -> urutan QGC (STD_TO_SDL).
+//    Peta manual (opsional, mode browser): localStorage.setItem("rov.buttonMap", JSON.stringify([...]))
+//      isi[nomorBrowser] = nomorQGC ; hapus dengan localStorage.removeItem("rov.buttonMap")
 //
-//  PENGAMAN DI SISI BROWSER (pengaman utama tetap watchdog di backend):
-//    - Enable ditolak kalau joystick tidak terdeteksi, stick belum netral, atau ada tombol yang ditekan.
-//    - Control otomatis OFF kalau: joystick terputus, tab disembunyikan, jendela kehilangan fokus
-//      (Gamepad API hanya hidup di halaman yang fokus), backend tidak terjangkau, atau tombol Space ditekan.
-//    - Space = STOP darurat (selama control ON).
-//    - Tombol joystick hanya dikirim saat control ON (kalau OFF, kotak Buttons hanya untuk cek nomor).
+//  Space = STOP darurat (selama dashboard fokus). Token opsional (kalau backend pakai ROV_CONTROL_TOKEN):
+//    localStorage.setItem("rov.controlToken", "tokenmu")
 
 
 import { BACKEND_URL } from "./config.js";
 import { appendLog } from "./logger.js";
 import { JOY_AXES, getConfig, processAxes, readSnapshot } from "./joystick.js";
 
-const SEND_MS = 50;          // 20 Hz
+const SEND_MS = 50;          // 20 Hz (mode browser)
 const SEND_TIMEOUT_MS = 250; // satu paket joystick tidak boleh menunggu lebih lama dari ini
 const STATUS_MS = 500;
-const MAX_FAILS = 20;        // ~1 detik gagal berturut-turut -> control dimatikan
+const FAST_STATUS_MS = 150;  // saat panel terbuka dan bridge tersambung: grafik bar lebih halus
+const CONFIG_PUSH_MS = 2000;
+const MAX_FAILS = 20;        // ~1 detik gagal berturut-turut -> control dimatikan (mode browser)
 const TOKEN_KEY = "rov.controlToken";
 const BTN_MAP_KEY = "rov.buttonMap";
 
 const ZERO = { surge: 0, sway: 0, heave: 0, yaw: 0 };
-const AXIS_LABEL = { surge: "Surge", sway: "Sway", heave: "Heave", yaw: "Yaw" };
 const MODE_FROM_ID = { 19: "manual", 0: "stabilize", 2: "depth_hold" };
 
 // Nama fungsi tombol, disalin dari halaman Joystick QGC (hanya untuk TAMPILAN / tooltip).
-// Yang benar-benar menentukan aksi adalah parameter BTNn_FUNCTION di Pixhawk. Kalau kamu ubah
-// setup di QGC, perbarui tabel ini supaya tooltip tidak menyesatkan.
+// Yang benar-benar menentukan aksi adalah parameter BTNn_FUNCTION di Pixhawk.
+// Nomor 7 dan 8 = tekan stick kiri / kanan (L3 / R3). LT dan RT adalah SUMBU, bukan tombol.
 const QGC_BUTTONS = [
   "mount_center", "mode_manual", "mode_depth_hold", "mode_stabilize", "disarm", "shift", "arm",
-  "(No Action - fungsi QGC)", "roll_pitch_toggle", "servo_1_min_momentary", "servo_1_max_momentary",
+  "(No Action)", "roll_pitch_toggle", "servo_1_min_momentary", "servo_1_max_momentary",
   "gain_inc", "gain_dec", "servo_3_inc", "servo_3_dec",
 ];
 const QGC_SHIFT = { 9: "mount_pan_left", 10: "mount_pan_right", 11: "trim_pitch_dec", 12: "trim_pitch_inc" };
 const BTN_BITS = 16;         // MANUAL_CONTROL.buttons = 16 bit (tombol 0..15)
 
+// Gamepad API ("standard" mapping) -> nomor tombol QGC (SDL GameController). -1 = tidak ada tombolnya di QGC.
+// browser:  0 A, 1 B, 2 X, 3 Y, 4 LB, 5 RB, 6 LT, 7 RT, 8 Back, 9 Start, 10 L3, 11 R3, 12-15 D-pad atas/bawah/kiri/kanan, 16 Guide
+// QGC/SDL:  0 A, 1 B, 2 X, 3 Y, 4 Back, 5 Guide, 6 Start, 7 L3, 8 R3, 9 LB, 10 RB, 11-14 D-pad atas/bawah/kiri/kanan
+const STD_TO_SDL = [0, 1, 2, 3, 9, 10, -1, -1, 4, 6, 7, 8, 11, 12, 13, 14, 5];
+
 // ===== State =====
-let status = null;      // balasan terakhir /control/status
-let wantActive = false; // operator sedang menyetir (sisi browser)
+let status = null;       // balasan terakhir /control/status
+let wantActive = false;  // operator sedang menyetir
+let activeSource = "";   // "bridge" | "browser"
 let inflight = false;
+let polling = false;
+let lastPoll = 0;
 let fails = 0;
-let busy = false;       // arm / mode sedang diproses
-let epoch = 0;          // naik tiap Enable/Stop: balasan status yang berangkat SEBELUM itu dibuang
+let busy = false;        // arm / mode / enable sedang diproses
+let epoch = 0;           // naik tiap Enable/Stop: balasan status yang berangkat SEBELUM itu dibuang
+let adoptBlockUntil = 0; // jangan "mengadopsi" control backend sesaat setelah STOP
+let cfgSent = "";
 let ui = null;
 
 
-// ===== Tombol joystick =====
+// ===== Tombol joystick (mode browser) =====
 function loadButtonMap() {
   try {
     const m = JSON.parse(localStorage.getItem(BTN_MAP_KEY));
@@ -70,16 +80,20 @@ function loadButtonMap() {
   } catch (_) { /* tidak ada / rusak -> bawaan */ }
   return null;
 }
-let buttonMap = loadButtonMap();
+const buttonMap = loadButtonMap();
 
-const toQgc = (i) => (buttonMap ? (buttonMap[i] ?? -1) : i);
+function toQgc(i, snap) {
+  if (buttonMap) return buttonMap[i] ?? -1;
+  if (snap.mapping === "standard") return STD_TO_SDL[i] ?? -1;
+  return i;   // joystick non-standard: apa adanya
+}
 
-/** Bitmask tombol (nomor QGC) dari snapshot joystick. Tombol di luar 0..15 diabaikan. */
+/** Bitmask tombol (nomor QGC) dari snapshot browser. Tombol di luar 0..15 diabaikan. */
 function buttonMask(snap) {
   let mask = 0;
   snap.buttons.forEach((pressed, i) => {
     if (!pressed) return;
-    const q = toQgc(i);
+    const q = toQgc(i, snap);
     if (q >= 0 && q < BTN_BITS) mask |= (1 << q);
   });
   return mask;
@@ -139,7 +153,7 @@ function reportError(prefix, e) {
 function template() {
   const bars = JOY_AXES.map((a) => `
     <div class="dv-axis">
-      <span>${AXIS_LABEL[a.key] || a.label}</span>
+      <span>${a.label}</span>
       <div class="dv-bar" data-bar="${a.key}"><i></i></div>
       <b data-val="${a.key}">0.00</b>
     </div>`).join("");
@@ -186,11 +200,15 @@ function template() {
       <div class="dv-bnames" id="dv-bnames">--</div>
     </div>
 
+    <div class="dv-diag" id="dv-diag" data-state="off">Bridge: --</div>
+    <div class="dv-raw" id="dv-raw"></div>
+    <div class="dv-evt" id="dv-evt"></div>
+
     <div class="dv-last" id="dv-last">Sent: --</div>
 
     <p class="dv-msg" id="dv-msg"></p>
-    <p class="dv-note">Space = STOP darurat. Control otomatis OFF kalau jendela kehilangan fokus. Tutup QGC (atau matikan joystick-nya) saat nyetir dari sini.
-    Fungsi tombol diatur di Pixhawk (sama dengan QGC); nomor tombol harus sama dengan di QGC.</p>`;
+    <p class="dv-note">Joystick Bridge (tools/joystick_bridge.py) = bebas tab/fokus, sama seperti QGC. Tanpa Bridge, control otomatis OFF kalau tab disembunyikan.
+    Space = STOP darurat. Tutup QGC (atau matikan joystick-nya) saat nyetir dari sini. Fungsi tombol diatur di Pixhawk, nomornya sama dengan QGC.</p>`;
 }
 
 function renderBars(out) {
@@ -205,6 +223,7 @@ function renderBars(out) {
   }
 }
 
+/** mask = bitmask nomor QGC. snap hanya untuk mode browser (menampilkan tombol yang tidak terkirim). */
 function renderButtons(mask, snap) {
   const names = [];
   ui.chips.forEach((el, i) => {
@@ -212,16 +231,40 @@ function renderButtons(mask, snap) {
     el.classList.toggle("on", on);
     if (on) names.push(`${i} ${QGC_BUTTONS[i] || ""}`.trim());
   });
-  // tombol di luar 0..15 / di luar peta: tampilkan supaya operator tahu kenapa tidak berefek
   const lost = [];
-  snap.buttons.forEach((p, i) => {
-    if (!p) return;
-    const q = toQgc(i);
-    if (q < 0 || q >= BTN_BITS) lost.push(`#${i}`);
-  });
+  if (snap) {
+    snap.buttons.forEach((p, i) => {
+      if (!p) return;
+      const q = toQgc(i, snap);
+      if (q < 0 || q >= BTN_BITS) lost.push(`#${i}`);
+    });
+  }
   let text = names.length ? names.join("  +  ") : "--";
   if (lost.length) text += `   (tidak dikirim: browser ${lost.join(", ")})`;
   ui.bnames.textContent = text;
+}
+
+const RAW_NAMES = ["LX", "LY", "RX", "RY", "LT", "RT"];
+
+/** Bukti bahwa input dari Bridge benar-benar sampai di backend: laju paket, umur data, sumbu mentah, tombol terakhir. */
+function renderBridgeDiag(s) {
+  const b = s?.bridge;
+  if (!b || !b.connected) {
+    ui.diag.dataset.state = "off";
+    ui.diag.textContent = "Bridge: tidak terhubung. Jalankan tools/joystick_bridge.py di laptop.";
+    ui.raw.textContent = "";
+    ui.evt.textContent = "";
+    return;
+  }
+  const flowing = b.rate_hz >= 5 && (b.age_ms ?? 9999) < 500;
+  ui.diag.dataset.state = flowing ? "ok" : "warn";
+  ui.diag.textContent =
+    `Bridge ● ${shorten(b.name || "controller", 22)} · ${b.rate_hz} Hz · ${b.age_ms ?? "--"} ms · ${b.rx} paket`;
+  ui.raw.textContent = "Raw  " + (b.raw || []).map((v, i) => `${RAW_NAMES[i] || "S" + i} ${v >= 0 ? "+" : ""}${v.toFixed(2)}`).join("  ");
+  const ev = b.events?.[0];
+  ui.evt.textContent = ev
+    ? `Last press: ${ev.n} ${QGC_BUTTONS[ev.n] || ""} (${(ev.age_ms / 1000).toFixed(1)}s ago)`
+    : "Last press: --  (tekan tombol joystick)";
 }
 
 function render() {
@@ -232,6 +275,7 @@ function render() {
   const active = wantActive && !!s?.active;
   const stale = active && !!s?.stale;
   const armed = !!s?.armed;
+  const bridgeOn = !!s?.bridge?.connected;
 
   // Chip di header
   let state = "off";
@@ -257,7 +301,9 @@ function render() {
   pill("ctrl", `Control: ${!s ? "--" : avail ? (active ? "ON" : "Ready") : "Locked"}`, !s ? "warn" : avail ? (active ? "ok" : "warn") : "bad");
   pill("armed", `Armed: ${!s ? "--" : armed ? "YES" : "NO"}`, armed ? "bad" : "ok");
   pill("mode", `Mode: ${s ? s.mode : "--"}`, "ok");
-  pill("joy", `Joystick: ${snap.connected ? "Connected" : "Not found"}`, snap.connected ? "ok" : "bad");
+  if (bridgeOn) pill("joy", `Joystick: ${shorten(s.bridge.name || "controller", 24)} (Bridge)`, "ok");
+  else if (snap.connected) pill("joy", "Joystick: Browser only", "warn");
+  else pill("joy", "Joystick: Not found", "bad");
 
   // Tombol
   const can = avail && conn && !busy;
@@ -292,8 +338,11 @@ function render() {
     say("Control dimatikan di backend. Jalankan backend dengan ROV_ENABLE_CONTROL=1.", "warn");
   }
 
+  renderBridgeDiag(s);
+
   ui.last.textContent = s
     ? `Sent  X ${s.last.x}  Y ${s.last.y}  Z ${s.last.z}  R ${s.last.r}  B ${s.last.b ?? 0}   ·   limit ${Math.round(s.limit * 100)}%` +
+      (active ? `   ·   via ${s.source || activeSource}` : "") +
       (stale ? "   ·   WATCHDOG: netral" : "")
     : "Sent: --";
 }
@@ -302,56 +351,92 @@ function render() {
 // ==================== Aksi ====================
 function applyStatus(s) {
   status = s;
-  // Backend mematikan control sendiri (mis. Pixhawk terputus)
+
+  // Backend mematikan control sendiri (mis. Pixhawk terputus, bridge berhenti)
   if (wantActive && !s.active) {
     wantActive = false;
     const why = s.reason || "dimatikan backend";
     say(`Control OFF: ${why}`, "warn");
     appendLog(`[DRIVE] Control OFF — ${why}`, "warn");
   }
+
+  // Halaman di-refresh saat control via bridge masih ON: sambungkan lagi tampilannya
+  if (!wantActive && s.active && s.source === "bridge" && Date.now() > adoptBlockUntil && !busy) {
+    wantActive = true;
+    activeSource = "bridge";
+    say("Control via Bridge sedang ON (tersambung kembali ke tampilan).", "ok");
+  }
   render();
 }
 
 async function pollStatus() {
+  if (polling) return;
+  polling = true;
+  lastPoll = Date.now();
   const myEpoch = epoch;
   try {
     const s = await api("/control/status", { timeoutMs: 1500 });
-    // Balasan ini berangkat sebelum Enable/Stop terakhir -> isinya sudah basi, jangan dipakai
-    // (kalau dipakai, "active:false" lama bisa mematikan control yang baru saja dinyalakan).
+    // Balasan ini berangkat sebelum Enable/Stop terakhir -> sudah basi, jangan dipakai.
     if (myEpoch !== epoch) return;
     applyStatus(s);
   } catch (_) {
     if (myEpoch !== epoch) return;
     status = null;
-    if (wantActive) stopDrive("Backend tidak terjangkau", "error", false);
+    // Mode bridge tidak bergantung pada koneksi browser ke backend, jadi jangan dimatikan dari sini.
+    if (wantActive && activeSource === "browser") stopDrive("Backend tidak terjangkau", "error", false);
     render();
+  } finally {
+    polling = false;
   }
 }
 
+async function pushConfig() {
+  if (status && !status.available) return;   // kontrol mati di backend: tidak ada gunanya
+  const json = JSON.stringify(getConfig());
+  if (json === cfgSent) return;
+  try {
+    await api("/control/config", { method: "POST", body: JSON.parse(json) });
+    cfgSent = json;
+    appendLog("[DRIVE] Pengaturan joystick dikirim ke backend (dipakai Bridge).");
+  } catch (_) { /* backend belum siap / kontrol mati: dicoba lagi nanti */ }
+}
+
 async function enableDrive() {
-  const cfg = getConfig();
-  const snap = readSnapshot(cfg);
-  if (!snap.connected) {
-    say("Joystick belum terdeteksi. Gerakkan stick atau tekan satu tombol, lalu coba lagi.", "error");
-    return;
+  const bridgeOn = !!status?.bridge?.connected;
+  let body;
+
+  if (bridgeOn) {
+    body = { enabled: true, source: "bridge" };   // backend memeriksa sendiri stick netral dari data bridge
+  } else {
+    const cfg = getConfig();
+    const snap = readSnapshot(cfg);
+    if (!snap.connected) {
+      say("Joystick belum terdeteksi. Jalankan Joystick Bridge (disarankan), atau gerakkan stick agar browser mengenalinya.", "error");
+      return;
+    }
+    const out = processAxes(snap.rawAxes, cfg);
+    if (Object.values(out).some((v) => Math.abs(v) > 0.001)) {
+      say("Lepas semua stick dulu (harus netral), lalu tekan Enable lagi.", "error");
+      return;
+    }
+    if (buttonMask(snap) !== 0) {
+      say("Lepas semua tombol joystick dulu, lalu tekan Enable lagi.", "error");
+      return;
+    }
+    body = { enabled: true, source: "browser", axes: out, buttons: 0 };
   }
-  const out = processAxes(snap.rawAxes, cfg);
-  if (Object.values(out).some((v) => Math.abs(v) > 0.001)) {
-    say("Lepas semua stick dulu (harus netral), lalu tekan Enable lagi.", "error");
-    return;
-  }
-  if (buttonMask(snap) !== 0) {
-    say("Lepas semua tombol joystick dulu, lalu tekan Enable lagi.", "error");
-    return;
-  }
+
   busy = true; epoch++; render();
   try {
-    const s = await api("/control/enable", { method: "POST", body: { enabled: true, axes: out, buttons: 0 } });
+    const s = await api("/control/enable", { method: "POST", body });
     epoch++;
     wantActive = true;
+    activeSource = body.source;
     fails = 0;
-    appendLog(`[DRIVE] Control ON (limit ${Math.round(s.limit * 100)}%)`);
-    say("Control ON. Gerakkan joystick untuk menyetir. Space = STOP.", "ok");
+    appendLog(`[DRIVE] Control ON via ${activeSource === "bridge" ? "Bridge" : "Browser"} (limit ${Math.round(s.limit * 100)}%)`);
+    say(activeSource === "bridge"
+      ? "Control ON via Bridge. Tab / jendela lain boleh dibuka. Space = STOP."
+      : "Control ON via Browser. Tab ini harus tetap tampil dan fokus (pakai Bridge supaya bebas). Space = STOP.", "ok");
     applyStatus(s);
   } catch (e) {
     reportError("Enable gagal", e);
@@ -364,6 +449,7 @@ function stopDrive(reason, level = "warn", tell = true) {
   wantActive = false;
   epoch++;
   fails = 0;
+  adoptBlockUntil = Date.now() + 1500;
   if (tell) {
     api("/control/stop", { method: "POST", body: {}, timeoutMs: 1500 }).then(applyStatus).catch(() => {});
   }
@@ -415,23 +501,37 @@ async function changeMode() {
 function tick() {
   if (!ui) return;
   const popOpen = !ui.pop.hidden;
+  const bridgeOn = !!status?.bridge?.connected;
+
+  // Panel terbuka + bridge tersambung: ambil status lebih sering supaya bar bergerak halus
+  if (popOpen && bridgeOn && !polling && Date.now() - lastPoll > FAST_STATUS_MS) pollStatus();
+
   if (!wantActive && !popOpen) return;
 
   const cfg = getConfig();
   const snap = readSnapshot(cfg);
-  const out = snap.connected ? processAxes(snap.rawAxes, cfg) : { ...ZERO };
-  const mask = snap.connected ? buttonMask(snap) : 0;
-  if (popOpen) {
-    renderBars(out);
-    renderButtons(mask, snap);
-  }
-  if (!wantActive) return;
 
+  if (popOpen) {
+    if (bridgeOn) {
+      renderBars(status.bridge.axes || ZERO);
+      renderButtons((status.bridge.recent ?? status.bridge.buttons) | 0, null);
+    } else {
+      renderBars(snap.connected ? processAxes(snap.rawAxes, cfg) : ZERO);
+      renderButtons(snap.connected ? buttonMask(snap) : 0, snap);
+    }
+  }
+
+  // Sumber BRIDGE: bridge mengirim langsung ke backend, dashboard tidak perlu mengirim apa-apa.
+  if (!wantActive || activeSource !== "browser") return;
+
+  // ----- Sumber BROWSER -----
   if (!snap.connected) {
     stopDrive("Joystick terputus", "error");
     return;
   }
   if (inflight) return;   // jangan menumpuk request; nilai terbaru dikirim di tick berikutnya
+  const out = processAxes(snap.rawAxes, cfg);
+  const mask = buttonMask(snap);
   inflight = true;
   api("/control/axes", { method: "POST", body: { ...out, buttons: mask }, timeoutMs: SEND_TIMEOUT_MS })
     .then((r) => {
@@ -485,6 +585,9 @@ export function initControl() {
     arm:    pop.querySelector("#dv-arm"),
     mode:   pop.querySelector("#dv-mode"),
     last:   pop.querySelector("#dv-last"),
+    diag:   pop.querySelector("#dv-diag"),
+    raw:    pop.querySelector("#dv-raw"),
+    evt:    pop.querySelector("#dv-evt"),
     msg:    pop.querySelector("#dv-msg"),
     bnames: pop.querySelector("#dv-bnames"),
     chips:  Array.from(pop.querySelectorAll(".dv-bchip")),
@@ -497,7 +600,7 @@ export function initControl() {
   ui.arm.addEventListener("click", toggleArm);
   ui.mode.addEventListener("change", changeMode);
 
-  // Pengaman browser
+  // Space = STOP darurat (jalan di semua sumber, selama dashboard fokus)
   document.addEventListener("keydown", (e) => {
     if (e.code === "Space" && wantActive) {
       e.preventDefault();
@@ -505,20 +608,28 @@ export function initControl() {
       stopDrive("STOP (Space)");
     }
   }, true);
+
+  // Pengaman KHUSUS sumber Browser: Gamepad API membeku saat tab disembunyikan / jendela tidak fokus.
+  // Sumber Bridge tidak terpengaruh, jadi tidak ada yang dimatikan di sini.
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && wantActive) stopDrive("Tab disembunyikan");
+    if (document.hidden && wantActive && activeSource === "browser") {
+      stopDrive("Tab disembunyikan (browser menghentikan data joystick). Pakai Joystick Bridge agar bebas.");
+    }
   });
   window.addEventListener("blur", () => {
-    if (wantActive) stopDrive("Jendela kehilangan fokus");
+    if (wantActive && activeSource === "browser") {
+      stopDrive("Jendela kehilangan fokus (browser menghentikan data joystick). Pakai Joystick Bridge agar bebas.");
+    }
   });
   window.addEventListener("pagehide", () => {
-    if (wantActive) {
+    if (wantActive && activeSource === "browser") {
       try { navigator.sendBeacon(`${BACKEND_URL}/control/stop`); } catch (_) { /* watchdog backend yang menutup */ }
     }
   });
 
   setInterval(tick, SEND_MS);
   setInterval(pollStatus, STATUS_MS);
-  pollStatus();
+  setInterval(pushConfig, CONFIG_PUSH_MS);
+  pollStatus().then(pushConfig);
   render();
 }

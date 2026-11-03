@@ -12,13 +12,13 @@
 import { appendLog } from "./logger.js";
 
 const STORAGE_KEY = "rov.joystick.config";
-const CONFIG_VERSION = 1;
+const CONFIG_VERSION = 2;
 
 export const JOY_AXES = [
-  { key: "surge", label: "Maju / mundur" },
-  { key: "sway", label: "Geser kiri / kanan" },
-  { key: "heave", label: "Naik / turun" },
-  { key: "yaw", label: "Putar (yaw)" },
+  { key: "sway",  label: "Lateral" },
+  { key: "surge", label: "Forward" },
+  { key: "yaw",   label: "Yaw" },
+  { key: "heave", label: "Throttle" },
 ];
 
 export function defaultConfig() {
@@ -26,22 +26,21 @@ export function defaultConfig() {
     version: CONFIG_VERSION,
     deviceId: null,
     axes: {
-      surge: { axis: 1, invert: true },
-      sway:  { axis: 0, invert: false },
-      heave: { axis: 3, invert: true },
-      yaw:   { axis: 2, invert: false },
+      surge: { axis: 1, invert: true }, // Forward : stick kiri vertikal, atas = maju
+      sway: { axis: 2, invert: false }, // Lateral : stick kanan horizontal
+      heave: { axis: 3, invert: true }, // Throttle: stick kanan vertikal, atas = naik
+      yaw: { axis: 0, invert: false }, // Yaw     : stick kiri horizontal
     },
-    deadzone: 0.1,
-    expo: 0.3,
-    gain: 0.8,
+    deadzone: 0.05,
+    expo: 0,
+    gain: 1.0,
   };
 }
 
 const num = (v, min, max, fallback) =>
   Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
 
-// Apa pun yang dibaca dari localStorage / file impor dibersihkan dulu, supaya
-// data rusak atau dari versi lama tidak bikin error.
+// Apa pun yang dibaca dari localStorage / file impor dibersihkan dulu, supaya data rusak atau dari versi lama tidak bikin error.
 export function sanitizeConfig(raw) {
   const def = defaultConfig();
   const src = raw && typeof raw === "object" ? raw : {};
@@ -66,8 +65,11 @@ export function sanitizeConfig(raw) {
 function loadConfig() {
   try {
     const text = localStorage.getItem(STORAGE_KEY);
-    if (text) return sanitizeConfig(JSON.parse(text));
-  } catch (_) { /* rusak / diblokir -> pakai bawaan */ }
+    if (text) {
+      const saved = JSON.parse(text);
+      if (saved && saved.version === CONFIG_VERSION) return sanitizeConfig(saved);
+    }
+  } catch (_) { /* rusak / diblokir -> bawaan */ }
   return defaultConfig();
 }
 
@@ -171,4 +173,19 @@ export function startJoystick() {
   });
   const problem = getGamepadProblem();
   if (problem) appendLog(`[JOY] ${problem}`, "warn");
+}
+
+// ==================== Nomor tombol (urutan SDL GameController) ====================
+export const QGC_BUTTON_LABELS = ["A", "B", "X", "Y", "Back", "Guide", "Start", "L3", "R3", "LB", "RB", "D-pad ↑", "D-pad ↓", "D-pad ←", "D-pad →"];
+// Gamepad API ("standard") -> nomor QGC. -1 = tidak ada tombolnya di QGC (LT dan RT adalah sumbu).
+const STD_TO_SDL = [0, 1, 2, 3, 9, 10, -1, -1, 4, 6, 7, 8, 11, 12, 13, 14, 5];
+
+export function buttonMaskQgc(snap) {
+  let mask = 0;
+  snap.buttons.forEach((pressed, i) => {
+    if (!pressed) return;
+    const q = snap.mapping === "standard" ? (STD_TO_SDL[i] ?? -1) : i;
+    if (q >= 0 && q < 16) mask |= (1 << q);
+  });
+  return mask;
 }

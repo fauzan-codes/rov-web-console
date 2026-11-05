@@ -105,13 +105,13 @@ HTTP_PORT = int(os.environ.get("ROV_PORT", "8080"))
 SERIAL_PORT = "udpin:0.0.0.0:14560"
 BAUD_RATE = 115200
 
-# ===== Pengaturan motor / thruster (tab Thruster di GCS) =====
-# Jalurnya SAMA dengan telemetri: lewat mavlink-routerd (MAVProxy2.py) di endpoint UDP 14560,
-# bukan langsung ke serial Pixhawk (serial hanya boleh dibuka satu proses: router).
+# ===== Pengaturan motor / thruster dan Drive Control =====
+# Perintah ke Pixhawk dikirim lewat jalur yang sama dengan telemetri: mavlink-routerd (MAVProxy2.py) pada
+# endpoint UDP 14560. Serial Pixhawk hanya boleh dibuka satu proses (router).
 MOTOR_COUNT        = 6
-MOTOR_DIR_PARAM    = "MOT_{n}_DIRECTION"   # 1 = normal, -1 = terbalik. CEK nama ini di firmware ArduSub kalian.
-# Fitur yang MENULIS ke robot (balik arah, uji motor) default MATI. Nyalakan sadar:
-#   ROV_ENABLE_CONTROL=1 python3 gcs_server.py      (di mode DEV otomatis nyala karena hanya simulasi)
+MOTOR_DIR_PARAM    = "MOT_{n}_DIRECTION"
+# Fitur yang MENULIS ke vehicle (reverse motor, motor test, Drive Control, Button Assignment) default NONAKTIF.
+# Aktifkan dengan:  ROV_ENABLE_CONTROL=1 python3 gcs_server.py   (di DEV mode otomatis aktif, hanya simulasi)
 ENABLE_MOTOR_CONFIG    = DEV_MODE or os.environ.get("ROV_ENABLE_CONTROL") == "1"
 MOTOR_TEST_MAX_PERCENT = 30     # batas atas daya uji motor, dipaksa di backend
 MOTOR_TEST_MAX_SECONDS = 3      # batas atas durasi uji motor
@@ -129,9 +129,9 @@ MOTOR_TEST_INDEX_BASE  = int(os.environ.get("ROV_MOTOR_TEST_INDEX_BASE", "1"))
 MOTOR_TEST_PWM_NEUTRAL = 1500   # us, motor diam
 MOTOR_TEST_PWM_PER_PCT = 4      # 100% = +400 us (1500 -> 1900). Kebanyakan ESC thruster: 1100-1900
 MAV_REPLY_TIMEOUT      = 2.0    # detik menunggu balasan Pixhawk
-# system id backend = 255 (sama dengan QGC). ArduSub HANYA menerima MANUAL_CONTROL dan heartbeat GCS
-# dari system id = SYSID_MYGCS (bawaan 255). Akibatnya QGC (joystick-nya) harus MATI saat nyetir
-# dari GCS web, dan sebaiknya ditutup juga saat uji motor.
+# System id backend = 255 (sama dengan QGroundControl). ArduSub hanya menerima MANUAL_CONTROL dan heartbeat GCS
+# dari system id = SYSID_MYGCS (default 255). Konsekuensinya, joystick QGC harus dinonaktifkan saat mengemudi
+# dari GCS web, dan sebaiknya QGC ditutup saat motor test.
 MAV_SOURCE_SYSTEM      = int(os.environ.get("ROV_MAV_SYSID", "255"))
 
 # ===== Model 3D ROV (.glb) =====

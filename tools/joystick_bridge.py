@@ -1,40 +1,37 @@
-#!/usr/bin/env python3
 """
 ./tools/joystick_bridge.py
-joystick_bridge.py - Pembaca joystick NATIVE di laptop untuk GCS web (sama seperti cara QGC membaca joystick).
+joystick_bridge.py - Joystick Bridge: membaca joystick di laptop operator dan meneruskannya ke backend GCS.
 
-KENAPA ADA FILE INI:
-  Browser (Gamepad API) hanya memberi data joystick ke tab yang sedang tampil. Pindah tab / buka terminal
-  = data membeku, jadi GCS web terpaksa memutus kontrol. Program ini membaca joystick di luar browser,
-  jadi TIDAK terpengaruh fokus jendela / tab, lalu mengirim nilainya ke backend. Dashboard web tetap dipakai
-  untuk Enable Control, ARM, mode, dan monitoring.
+LATAR BELAKANG
+  Gamepad API milik browser hanya memberikan data ke tab yang sedang tampil dan fokus. 
+  Bridge membaca joystick langsung dari sistem operasi, sehingga tetap berfungsi saat tab dipindah atau jendela lain sedang aktif (perilaku yang sama dengan QGroundControl). 
+  Dashboard tetap dipakai untuk Enable Control, ARM, mode, dan monitoring.
 
-ALUR:
-  Joystick --> joystick_bridge.py --HTTP POST /control/raw (20 Hz)--> backend (rov_control.py)
-  backend memakai pengaturan dari popup Settings (mapping, deadband, expo, gain) lalu mengirim MANUAL_CONTROL.
+ALUR DATA
+  Joystick --> joystick_bridge.py --HTTP POST /control/raw (20 Hz)--> backend (rov_control.py) --MANUAL_CONTROL--> Pixhawk
+  Backend menerapkan pengaturan dari Settings > Joystick (mapping, deadband, exponential, gain).
+  Bridge hanya mengirim nilai MENTAH dan TIDAK menggerakkan vehicle sendiri: vehicle baru bergerak setelah operator menekan Enable Control di dashboard.
 
-DUA CARA MEMBACA JOYSTICK (dicoba berurutan, --input auto):
-  1. XInput (Windows, tanpa library tambahan): untuk controller Xbox / Logitech F310 mode X / dsb.
-     Hot-plug (cabut/colok) langsung terdeteksi dan jalan di latar belakang.
-  2. SDL lewat pygame-ce: untuk controller non-XInput (butuh:  py -m pip install pygame-ce).
+INPUT BACKEND (--input auto | xinput | sdl)
+  xinput : Windows, tanpa dependensi tambahan. Mendukung controller XInput (Xbox, Logitech F310 mode X, dll.). Hot-plug dan operasi di latar belakang didukung penuh.
+  sdl    : melalui pygame-ce (pip install pygame-ce), untuk controller non-XInput.
+  auto   : mencoba xinput lebih dulu, lalu sdl.
 
-PENOMORAN (sama dengan QGC / SDL GameController):
-  Tombol: 0 A, 1 B, 2 X, 3 Y, 4 Back, 5 Guide, 6 Start, 7 L3, 8 R3, 9 LB, 10 RB, 11 D-pad atas, 12 bawah, 13 kiri, 14 kanan
-  LT dan RT BUKAN tombol (keduanya sumbu 4 dan 5), makanya tidak terdeteksi sebagai tombol di QGC.
-  Sumbu: 0 stick kiri X, 1 stick kiri Y (atas = negatif), 2 stick kanan X, 3 stick kanan Y, 4 LT (0..1), 5 RT (0..1).
+NUMBERING (mengikuti QGroundControl / SDL GameController)
+  Buttons : 0 A, 1 B, 2 X, 3 Y, 4 Back, 5 Guide, 6 Start, 7 L3, 8 R3, 9 LB, 10 RB, 11 D-pad Up, 12 Down, 13 Left, 14 Right
+  Axes    : 0 Left X, 1 Left Y (atas = negatif), 2 Right X, 3 Right Y, 4 LT (0..1), 5 RT (0..1)
+  LT dan RT adalah axis, bukan tombol.
 
-PENGAMAN:
-  - Program mati / joystick dicabut -> backend otomatis netral (watchdog) lalu mematikan control.
-  - Ctrl+C di jendela ini = berhenti seketika (backend dikabari).
-  - Program ini TIDAK menggerakkan robot sendiri. Robot baru bergerak setelah Enable Control di dashboard.
+SAFETY
+  - Bridge berhenti atau joystick dicabut -> backend menetralkan output (watchdog) lalu mematikan control.
+  - Ctrl+C menghentikan Bridge seketika dan memberi tahu backend.
 
-JALANKAN:
-  py tools\\joystick_bridge.py --backend http://127.0.0.1:8080          (mode DEV di laptop)
-  py tools\\joystick_bridge.py --backend http://192.168.1.10:8080       (robot)
-  --list      : tampilkan joystick yang terdeteksi lalu keluar (untuk diagnosa)
-  --verbose   : cetak nilai sumbu tiap detik
-  --input xinput|sdl|auto
-  Token (kalau backend memakai ROV_CONTROL_TOKEN):  --token tokenmu
+PENGGUNAAN
+  py tools\\joystick_bridge.py --backend http://127.0.0.1:8080       # DEV mode (backend di laptop)
+  py tools\\joystick_bridge.py --backend http://192.168.1.10:8080    # vehicle (backend di Jetson)
+  --list      tampilkan joystick yang terdeteksi lalu keluar (diagnosa)
+  --verbose   cetak nilai axis tiap detik
+  --token     token kontrol, jika backend memakai ROV_CONTROL_TOKEN
 """
 
 import argparse
@@ -47,7 +44,7 @@ import time
 import urllib.error
 import urllib.request
 
-# Hanya berpengaruh ke jalur SDL (pygame): terima data joystick tanpa jendela fokus, tanpa membuka jendela.
+# Hanya berpengaruh pada jalur SDL (pygame): menerima data joystick walau tidak ada jendela fokus, tanpa membuka jendela.
 os.environ.setdefault("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1")
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
@@ -61,11 +58,11 @@ def clamp(v, lo=-1.0, hi=1.0):
 
 # ==================== Pembaca 1: XInput (Windows) ====================
 class XInputReader:
-  """Membaca controller XInput lewat xinput1_4.dll. Tanpa pygame, tanpa fokus jendela, hot-plug otomatis."""
+  """Membaca controller XInput melalui xinput1_4.dll. Tanpa pygame, tidak butuh fokus jendela, hot-plug otomatis."""
 
   src = "XInput"
 
-  # bit tombol XInput -> nomor tombol SDL/QGC
+  # (bit tombol XInput, nomor tombol SDL / QGC)
   MAP = [
     (0x1000, 0), (0x2000, 1), (0x4000, 2), (0x8000, 3),      # A B X Y
     (0x0020, 4), (0x0400, 5), (0x0010, 6),                   # Back, Guide, Start
@@ -97,7 +94,7 @@ class XInputReader:
         continue
       fns = []
       try:
-        fns.append(dll[100])               # XInputGetStateEx: ada tombol Guide
+        fns.append(dll[100])               # XInputGetStateEx (ordinal 100): menyertakan tombol Guide
       except Exception:   # noqa: BLE001
         pass
       try:
@@ -130,7 +127,7 @@ class XInputReader:
         self.slot = None
     if self.slot is None:
       now = time.time()
-      if now - self.last_scan < 1.0:        # memindai slot kosong itu lambat: cukup 1x per detik
+      if now - self.last_scan < 1.0:        # memindai slot kosong relatif lambat: cukup 1x per detik
         return None
       self.last_scan = now
       for s in range(4):
@@ -159,7 +156,7 @@ class XInputReader:
 
 # ==================== Pembaca 2: SDL lewat pygame ====================
 class SdlReader:
-  """Cadangan untuk controller non-XInput. pygame dimuat saat pertama dibutuhkan."""
+  """Fallback untuk controller non-XInput. pygame baru dimuat saat pertama kali dibutuhkan."""
 
   src = "SDL"
 
@@ -186,7 +183,7 @@ class SdlReader:
     self.ok = True
 
   def _rescan(self):
-    """Paksa SDL memindai ulang perangkat: hot-plug tidak selalu terdeteksi sendiri."""
+    """Paksa SDL memindai ulang perangkat, karena hot-plug tidak selalu terdeteksi otomatis."""
     try:
       self.controller.quit()
       self.pg.joystick.quit()
@@ -322,7 +319,7 @@ def main(argv=None):
 
       if pad:
         axes, mask = pad["axes"], pad["mask"]
-        # cetak tombol yang BARU ditekan: bukti joystick terbaca di sisi laptop
+        # Cetak tombol yang baru ditekan (membantu memverifikasi bahwa joystick terbaca di laptop)
         for b in range(15):
           if (mask >> b) & 1 and not (prev_mask >> b) & 1:
             print(f"[bridge] {time.strftime('%H:%M:%S')}  tombol {b} ({BTN_NAMES[b]}) ditekan")
@@ -348,7 +345,7 @@ def main(argv=None):
       except Exception as e:   # noqa: BLE001
         fails += 1
         err = f"backend tidak terjangkau ({type(e).__name__})"
-        if fails >= 3:          # satu-dua paket telat itu wajar: jangan berisik
+        if fails >= 3:          # 1-2 paket terlambat itu wajar; baru dilaporkan setelah 3 kali berturut-turut
           backend_ok = False
 
       state = (pad["name"] if pad else None, backend_ok, active if backend_ok else None, err if backend_ok is False else "")
@@ -367,7 +364,7 @@ def main(argv=None):
       if sleep_left > 0:
         time.sleep(sleep_left)
   finally:
-    # kabari backend supaya control langsung dimatikan (tidak menunggu watchdog)
+    # Beri tahu backend agar control langsung dimatikan (tanpa menunggu watchdog)
     try:
       post(url, {"connected": False, "name": "", "axes": [], "buttons": 0}, args.token, timeout=0.5)
     except Exception:   # noqa: BLE001

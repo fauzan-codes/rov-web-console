@@ -1,17 +1,15 @@
 //  ./frontend/js/buttons.js
-//  buttons.js - isi tab BUTTON ASSIGNMENT di popup Settings: pilih fungsi tiap tombol joystick (seperti halaman Joystick QGC).
+//  buttons.js - Tab "Button Assignment" pada Settings: menentukan fungsi tiap tombol joystick.
 
 //  NOTE:
-//  Fungsi tombol TIDAK disimpan di web. Sumber kebenarannya = PIXHAWK (parameter BTNn_FUNCTION dan BTNn_SFUNCTION),
-//  sama persis dengan yang diatur QGC. Modul ini membaca dan menulis parameter itu lewat backend, dan setiap
-//  perubahan DIBACA ULANG oleh backend (field `verified`).
-//  Di mode DEV (tanpa robot) yang diubah adalah tabel simulasi di backend, jadi bisa dites di laptop.
+//  Fungsi tombol TIDAK disimpan di dashboard. Sumber kebenarannya adalah Pixhawk (parameter BTNn_FUNCTION dan BTNn_SFUNCTION), sama seperti halaman Joystick pada QGroundControl. 
+//  Modul ini membaca dan menulis parameter tersebut melalui backend (/buttons/*); setiap perubahan dibaca ulang oleh backend dan hasilnya dilaporkan pada field `verified`. 
+//  Pada DEV mode (tanpa vehicle) yang diubah adalah tabel simulasi di backend.
 //
-//  Nomor tombol = nomor di QGC (urutan SDL GameController). Baris menyala saat tombolnya ditekan, jadi
-//  cara cari nomor tombol: tekan tombolnya dan lihat baris mana yang menyala.
+//  Nomor tombol mengikuti QGC / SDL GameController. Baris tabel menyala saat tombolnya ditekan, sehingga nomor suatu tombol dapat dicari dengan menekannya.
 //
-//  Terkunci kalau: Pixhawk belum terhubung, kontrol dimatikan di backend (ROV_ENABLE_CONTROL), robot ARMED,
-//  atau Drive Control sedang ON (supaya tombol tidak berubah fungsi saat robot dikendalikan).
+//  Pengeditan DIKUNCI jika: Pixhawk belum terhubung, kontrol dimatikan di backend (ROV_ENABLE_CONTROL), vehicle sedang ARMED, atau Drive Control sedang ON. 
+//  Tujuannya mencegah fungsi tombol berubah saat vehicle dikendalikan.
 
 
 import { BACKEND_URL } from "./config.js";
@@ -19,13 +17,13 @@ import { appendLog } from "./logger.js";
 import { QGC_BUTTON_LABELS, buttonMaskQgc, getConfig, readSnapshot } from "./joystick.js";
 
 const TOKEN_KEY = "rov.controlToken";
-const LIVE_MS = 250;
+const LIVE_MS = 250;   // interval polling status (kunci edit + highlight tombol)
 
 async function api(path, { method = "GET", body, timeoutMs = 20000 } = {}) {
   const headers = {};
-  if (body !== undefined) headers["Content-Type"] = "text/plain";   // simple request, tanpa preflight
+  if (body !== undefined) headers["Content-Type"] = "text/plain";   // "simple request": tanpa preflight CORS
   let token = "";
-  try { token = localStorage.getItem(TOKEN_KEY) || ""; } catch (_) { /* diblokir */ }
+  try { token = localStorage.getItem(TOKEN_KEY) || ""; } catch (_) { /* storage diblokir */ }
   if (token) headers["X-ROV-Token"] = token;
   const res = await fetch(`${BACKEND_URL}${path}`, {
     method, headers,
@@ -33,7 +31,7 @@ async function api(path, { method = "GET", body, timeoutMs = 20000 } = {}) {
     signal: AbortSignal.timeout(timeoutMs),
   });
   let data = {};
-  try { data = await res.json(); } catch (_) { /* bukan JSON */ }
+  try { data = await res.json(); } catch (_) { /* respons bukan JSON */ }
   if (!res.ok || data.ok === false) {
     const err = new Error(data.error || `HTTP ${res.status}`);
     err.data = data;
@@ -48,21 +46,22 @@ const shorten = (t, max = 90) => {
 };
 
 
+/** Pasang tab ke elemen `root`. Mengembalikan { destroy } untuk membersihkan timer saat Settings ditutup. */
 export function mountButtonsTab(root) {
-  let rows = [];            // [{n, f, s, error?}]
-  let functions = [];       // [{id, name}]
+  let rows = [];            // [{ n, f, s, error? }]  f = function, s = shift function
+  let functions = [];       // [{ id, name }] daftar fungsi dari backend
   let isDev = false;
   let live = null;          // balasan terakhir /control/status
   let busy = false;
   let destroyed = false;
-  let loaded = false;
   let timer = 0;
 
   root.innerHTML = `
     <div class="bt-wrap">
-      <p class="bt-intro st-block">Atur fungsi tiap tombol joystick. Tersimpan di <b>Pixhawk</b> (sama dengan halaman Joystick di QGC).
-      Tekan tombol di joystick: barisnya menyala, jadi gampang cari nomornya.
-      Hanya bisa diubah saat robot <b>DISARMED</b> dan Drive Control <b>OFF</b>.</p>
+      <p class="bt-intro st-block">Assign a function to each joystick button. Assignments are stored on the <b>Pixhawk</b>
+      (parameters BTNn_FUNCTION / BTNn_SFUNCTION), the same as the QGroundControl Joystick page.
+      Press a button on the joystick to highlight its row.
+      Editing requires the vehicle to be <b>DISARMED</b> and Drive Control <b>OFF</b>.</p>
       <div class="bt-table st-block">
         <div class="bt-head"><span>#</span><span>Button</span><span>Function</span><span>Shift function</span></div>
         <div class="bt-list" id="bt-list"></div>
@@ -70,7 +69,7 @@ export function mountButtonsTab(root) {
     </div>
     <footer class="st-foot">
       <span class="st-note bt-msg" id="bt-msg"></span>
-      <button type="button" class="st-act st-primary" id="bt-read"><i class="fa-solid fa-rotate"></i> Read from Pixhawk</button>
+      <button type="button" class="st-act st-primary" id="bt-read" title="Reload all button functions from the Pixhawk"><i class="fa-solid fa-rotate"></i> Read from Pixhawk</button>
     </footer>`;
 
   const $q = (sel) => root.querySelector(sel);
@@ -83,19 +82,20 @@ export function mountButtonsTab(root) {
   function optionsFor(current) {
     const opts = functions.map((f) => `<option value="${f.id}">${f.name} (${f.id})</option>`);
     if (current != null && !nameOf(current)) {
-      opts.push(`<option value="${current}">fungsi nomor ${current}</option>`);
+      opts.push(`<option value="${current}">function #${current}</option>`);
     }
-    opts.push(`<option value="custom">Nomor lain…</option>`);
+    opts.push(`<option value="custom">Other number…</option>`);
     return opts.join("");
   }
 
+  /** Alasan pengeditan terkunci, atau string kosong jika boleh diedit. */
   function lockReason() {
-    if (!live) return "Backend tidak terjangkau";
-    if (!live.available) return "Kontrol dimatikan di backend (ROV_ENABLE_CONTROL=1)";
-    if (!live.connected) return "Pixhawk belum terhubung";
-    if (live.active) return "Matikan Drive Control dulu";
-    if (live.armed) return "Disarm dulu";
-    if (busy) return "Menunggu operasi sebelumnya";
+    if (!live) return "Backend unreachable";
+    if (!live.available) return "Control is disabled on the backend (ROV_ENABLE_CONTROL=1)";
+    if (!live.connected) return "Pixhawk is not connected";
+    if (live.active) return "Turn Drive Control OFF first";
+    if (live.armed) return "Disarm the vehicle first";
+    if (busy) return "Waiting for the previous operation";
     return "";
   }
 
@@ -104,13 +104,13 @@ export function mountButtonsTab(root) {
       <div class="bt-row" data-row="${r.n}">
         <span class="bt-num">${r.n}</span>
         <span class="bt-lbl">${QGC_BUTTON_LABELS[r.n] || ""}</span>
-        <select class="bt-sel" data-n="${r.n}" data-kind="f" aria-label="Fungsi tombol ${r.n}">${optionsFor(r.f)}</select>
-        <select class="bt-sel" data-n="${r.n}" data-kind="s" aria-label="Fungsi shift tombol ${r.n}">${optionsFor(r.s)}</select>
+        <select class="bt-sel" data-n="${r.n}" data-kind="f" aria-label="Function of button ${r.n}">${optionsFor(r.f)}</select>
+        <select class="bt-sel" data-n="${r.n}" data-kind="s" aria-label="Shift function of button ${r.n}">${optionsFor(r.s)}</select>
       </div>`).join("");
     refresh();
   }
 
-  // Sinkronkan nilai pilihan + status kunci (dipanggil sering, ringan)
+  /** Sinkronkan nilai dropdown dan status kunci (dipanggil sering, ringan). */
   function refresh() {
     const lock = lockReason();
     rows.forEach((r) => {
@@ -125,6 +125,7 @@ export function mountButtonsTab(root) {
     $q("#bt-read").disabled = !live || busy;
   }
 
+  /** Sorot baris tombol yang sedang ditekan (dari Bridge jika aktif, selain itu dari browser). */
   function highlight() {
     let mask = 0;
     if (live?.bridge?.connected) mask = (live.bridge.recent ?? live.bridge.buttons) | 0;
@@ -155,18 +156,17 @@ export function mountButtonsTab(root) {
       rows = data.buttons;
       functions = data.functions;
       isDev = !!data.dev;
-      loaded = true;
       build();
       const failed = rows.filter((r) => r.error);
       if (failed.length) {
-        say(`Sebagian tombol tidak terbaca (${shorten(failed[0].error, 60)}).`, "error");
+        say(`Some buttons could not be read (${shorten(failed[0].error, 60)}).`, "error");
       } else if (!quiet) {
-        say(isDev ? "Tabel fungsi tombol (simulasi DEV) dibaca." : "Fungsi tombol dibaca dari Pixhawk.", "ok");
-        appendLog("[BUTTON] Fungsi tombol dibaca" + (isDev ? " (simulasi DEV)" : " dari Pixhawk"));
+        say(isDev ? "Button functions loaded (DEV simulation table)." : "Button functions loaded from the Pixhawk.", "ok");
+        appendLog("[BUTTON] Fungsi tombol dibaca" + (isDev ? " (tabel simulasi DEV)" : " dari Pixhawk"));
       }
     } catch (e) {
       console.error("[BUTTON] Gagal membaca:", e.message, e.data ?? "", e);
-      say(`Gagal membaca: ${shorten(e.message)}`, "error");
+      say(`Read failed: ${shorten(e.message)}`, "error");
     }
     busy = false;
     if (!destroyed) refresh();
@@ -179,21 +179,21 @@ export function mountButtonsTab(root) {
     try {
       const r = await api(`/buttons/${n}/function`, { method: "POST", body: { function: fid, shifted }, timeoutMs: 15000 });
       if (shifted) row.s = r.new; else row.f = r.new;
-      const line = `Tombol ${n}${shifted ? " (shift)" : ""}: ${nameOf(oldId) ?? oldId} → ${nameOf(r.new) ?? r.new}`;
+      const line = `Button ${n}${shifted ? " (shift)" : ""}: ${nameOf(oldId) ?? oldId} → ${nameOf(r.new) ?? r.new}`;
       if (r.verified) {
-        say(`${line}. Verified: dibaca ulang.`, "ok");
-        appendLog(`[BUTTON] ${line} (verified)`);
+        say(`${line}. Verified by read-back.`, "ok");
+        appendLog(`[BUTTON] ${line} (terverifikasi)`);
       } else {
-        say(`${line} TIDAK sesuai permintaan. Periksa Pixhawk.`, "error");
-        appendLog(`[BUTTON] ${line} — GAGAL verify`, "error");
+        say(`${line}: read-back does not match the requested value. Check the Pixhawk.`, "error");
+        appendLog(`[BUTTON] ${line} — verifikasi GAGAL`, "error");
       }
     } catch (e) {
       console.error("[BUTTON] Gagal mengubah:", e.message, e.data ?? "", e);
-      say(`Tombol ${n}: ${shorten(e.message)}`, "error");
+      say(`Button ${n}: ${shorten(e.message)}`, "error");
       appendLog(`[BUTTON] Tombol ${n}: ${shorten(e.message)}`, "error");
     }
     busy = false;
-    if (!destroyed) { build(); }
+    if (!destroyed) build();
   }
 
   listEl.addEventListener("change", (e) => {
@@ -203,10 +203,10 @@ export function mountButtonsTab(root) {
     const shifted = sel.dataset.kind === "s";
     let fid;
     if (sel.value === "custom") {
-      const v = prompt("Nomor fungsi (0-255).\nLihat tabel BTNn_FUNCTION di dokumentasi ArduSub, atau parameter BTN0_FUNCTION di QGC.");
+      const v = prompt("Function number (0-255).\nSee the BTNn_FUNCTION table in the ArduSub documentation, or parameter BTN0_FUNCTION in QGroundControl.");
       fid = v == null || v.trim() === "" ? NaN : Number(v);
       if (!Number.isInteger(fid) || fid < 0 || fid > 255) {
-        say("Nomor fungsi tidak valid (harus bilangan bulat 0-255).", "error");
+        say("Invalid function number (must be an integer between 0 and 255).", "error");
         build();
         return;
       }

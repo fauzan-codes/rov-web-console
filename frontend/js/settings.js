@@ -1,14 +1,17 @@
 //  ./frontend/js/settings.js
-//  settings.js - popup SETTINGS. Tab: Button Assignment, Joystick, dan Thruster.
+//  settings.js - Popup Settings dengan tiga tab: Button Assignment, Joystick, dan Thruster.
 
 //  NOTE:
-//  Popup ini modal di halaman yang SAMA (bukan window baru), jadi halaman utama (kamera, telemetri, rekaman) tetap berjalan.
+//  Popup ini modal pada halaman yang SAMA (bukan window baru), sehingga halaman utama (kamera, telemetri, rekaman) tetap berjalan di belakangnya.
 //
-//  SUMBER JOYSTICK (otomatis, sama dengan yang dipakai Drive Control):
-//    - Joystick Bridge tersambung -> tab Joystick menampilkan data dari Bridge (lewat backend /control/bridge)
-//    - Bridge tidak ada           -> tab Joystick memakai Gamepad API browser
-//  Perubahan di tab Joystick disimpan sebagai "draft" dulu. Baru permanen setelah Save (dan otomatis dikirim ke backend
-//  oleh control.js, supaya Bridge memakai pengaturan yang sama). Gaya ada di css/settings.css.
+//  INPUT SOURCE (otomatis, sama dengan Drive Control)
+//    - Joystick Bridge terhubung -> tab Joystick menampilkan data dari Bridge (lewat backend /control/bridge)
+//    - Bridge tidak aktif        -> tab Joystick memakai Gamepad API browser
+//
+//  PENYIMPANAN
+//    Perubahan di tab Joystick berstatus "draft" sampai tombol Save ditekan; menutup popup tanpa Save membuang draft.
+//    Setelah disimpan, konfigurasi dikirim ke backend oleh control.js agar Bridge memakai pengaturan yang sama.
+//    Isi tab Thruster ada di thruster.js, tab Button Assignment di buttons.js. Gaya ada di css/settings.css.
 
 
 import { appendLog } from "./logger.js";
@@ -27,14 +30,14 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const TUNES = [
   { key: "deadzone", label: "Deadband",    min: 0,   max: 0.5, step: 0.01, fmt: (v) => v.toFixed(2),
-    hint: "Gerakan stick yang lebih kecil dari ini diabaikan, supaya robot tidak bergerak sendiri." },
+    hint: "Stick movement smaller than this is ignored, so the vehicle does not drift on its own." },
   { key: "expo",     label: "Exponential", min: 0,   max: 1,   step: 0.05, fmt: (v) => v.toFixed(2),
-    hint: "0 = linear. Makin besar, makin lembut di dekat tengah dan penuh di ujung stick." },
+    hint: "0 = linear. Higher values give finer control near center and full response at the stick limit." },
   { key: "gain",     label: "Gain",        min: 0.1, max: 1,   step: 0.05, fmt: (v) => `${Math.round(v * 100)}%`,
-    hint: "Batas kekuatan maksimum saat stick didorong penuh." },
+    hint: "Maximum output when the stick is pushed fully." },
 ];
 
-// Nama sumbu Bridge / SDL GameController
+// Nama axis pada Bridge / SDL GameController (indeks = nomor axis)
 const BRIDGE_AXIS_NAMES = ["LX", "LY", "RX", "RY", "LT", "RT"];
 
 // ===== State popup =====
@@ -43,7 +46,7 @@ let ui = null;            // referensi elemen setelah popup dibuat
 let rafId = 0;
 let draft = null;
 let dirty = false;
-let deviceSig = "";       // penanda: kalau berubah, bagian daftar sumbu/tombol dibangun ulang
+let deviceSig = "";       // penanda perangkat; jika berubah, daftar axis/tombol dibangun ulang
 let lastFocus = null;
 let thruster = null;      // { destroy } dari mountThrusterTab
 let buttonsTab = null;
@@ -55,7 +58,7 @@ function template() {
   const mapRows = JOY_AXES.map((a) => `
     <div class="st-map-row">
       <span class="st-map-name">${a.label}</span>
-      <select class="st-select" data-map="${a.key}" aria-label="Axis untuk ${a.label}"></select>
+      <select class="st-select" data-map="${a.key}" aria-label="Axis for ${a.label}"></select>
       <label class="st-check"><input type="checkbox" data-inv="${a.key}" /> Invert</label>
       <div class="st-bar" data-out-bar="${a.key}"><i></i></div>
       <b class="st-val" data-out-val="${a.key}">0.00</b>
@@ -79,7 +82,7 @@ function template() {
           <button type="button" class="st-tab" role="tab" data-tab="joystick">Joystick</button>
           <button type="button" class="st-tab" role="tab" data-tab="thruster">Thruster</button>
         </nav>
-        <button type="button" class="st-close" id="st-close" aria-label="Tutup"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="st-close" id="st-close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
       </header>
 
       <!-- ===== TAB JOYSTICK ===== -->
@@ -93,7 +96,7 @@ function template() {
                 <span class="dot" id="st-dot" data-state="warn"></span>
                 <span class="st-status-text" id="st-status-text"></span>
               </div>
-              <select class="st-select st-device" id="st-device" aria-label="Pilih joystick" hidden></select>
+              <select class="st-select st-device" id="st-device" aria-label="Select joystick" hidden></select>
             </div>
 
             <div class="st-block">
@@ -109,7 +112,7 @@ function template() {
 
           <div class="st-col">
             <div class="st-block">
-              <h3 class="st-h">Axis mapping <span class="st-sub">(batang kanan = nilai setelah deadband, exponential, gain)</span></h3>
+              <h3 class="st-h">Axis mapping <span class="st-sub">(right bar = output after deadband, exponential, and gain)</span></h3>
               ${mapRows}
               <p class="st-warn" id="st-dup" hidden></p>
             </div>
@@ -117,24 +120,24 @@ function template() {
             <div class="st-block">
               <h3 class="st-h">Advanced</h3>
               ${tuneRows}
-              <canvas class="st-curve" id="st-curve" aria-label="Kurva respons"></canvas>
+              <canvas class="st-curve" id="st-curve" aria-label="Response curve"></canvas>
             </div>
           </div>
 
         </div>
 
         <footer class="st-foot">
-          <span class="st-note">Monitor mengikuti sumber yang dipakai (Bridge atau Browser). Pengaturan ini dipakai kedua sumber.</span>
+          <span class="st-note">The monitor follows the active input source (Bridge or Browser). These settings apply to both.</span>
           <span class="st-dirty" id="st-dirty" hidden>Not saved</span>
-          <button type="button" class="st-act" id="st-export" title="Simpan pengaturan ke file JSON"><i class="fa-solid fa-file-export"></i> Export</button>
-          <button type="button" class="st-act" id="st-import" title="Muat pengaturan dari file JSON"><i class="fa-solid fa-file-import"></i> Import</button>
-          <button type="button" class="st-act" id="st-reset"><i class="fa-solid fa-rotate-left"></i> Reset to default</button>
+          <button type="button" class="st-act" id="st-export" title="Save the settings to a JSON file"><i class="fa-solid fa-file-export"></i> Export</button>
+          <button type="button" class="st-act" id="st-import" title="Load settings from a JSON file"><i class="fa-solid fa-file-import"></i> Import</button>
+          <button type="button" class="st-act" id="st-reset" title="Restore the default mapping and curve"><i class="fa-solid fa-rotate-left"></i> Reset to default</button>
           <button type="button" class="st-act st-primary" id="st-save" disabled><i class="fa-solid fa-floppy-disk"></i> Save</button>
           <input type="file" id="st-file" accept="application/json,.json" hidden />
         </footer>
       </section>
 
-      <!-- ===== TAB THRUSTER (thruster.js) dan BUTTON ASSIGNMENT (buttons.js) ===== -->
+      <!-- ===== TAB THRUSTER (thruster.js) dan BUTTON ASSIGNMENT (buttons.js): isinya dibuat oleh modul masing-masing ===== -->
       <section class="st-pane" data-pane="thruster" id="st-thruster" hidden></section>
       <section class="st-pane" data-pane="buttons" id="st-buttons" hidden></section>
     </div>`;
@@ -152,25 +155,25 @@ function setBar(barEl, v) {
   fill.style.width = `${Math.abs(c) * 50}%`;
 }
 
-// Nama joystick dari browser biasanya panjang ("... (STANDARD GAMEPAD Vendor: 046d ...)")
+// Nama joystick dari browser biasanya panjang ("... (STANDARD GAMEPAD Vendor: 046d ...)"): ambil bagian depannya saja
 const shortName = (id) => id.split(" (")[0] || id;
 
 /**
- * Snapshot joystick dari SUMBER yang dipakai:
- *   Bridge tersambung -> data dari Bridge (nomor tombol sudah nomor QGC, sumbu urutan SDL)
- *   selain itu        -> Gamepad API browser
- * Bentuknya sama dengan readSnapshot() supaya sisa kode tidak perlu tahu bedanya.
+ * Snapshot joystick dari input source yang aktif:
+ *   Bridge terhubung -> data dari Bridge (nomor tombol sudah nomor QGC, axis urutan SDL)
+ *   selain itu       -> Gamepad API browser
+ * Bentuknya sama dengan readSnapshot() sehingga kode lain tidak perlu membedakan source.
  */
 function pickSnapshot(cfg) {
   const b = getBridge();
   if (b) {
-    const mask = (b.recent ?? b.buttons) | 0;   // "recent": tap singkat tetap terlihat
+    const mask = (b.recent ?? b.buttons) | 0;   // "recent" menahan tombol sesaat agar tap singkat tetap terlihat
     return {
       connected: true,
       source: "bridge",
       id: `${b.name || "controller"} (Bridge)`,
       index: 0,
-      mapping: "qgc",   // bukan "standard": nomor tombol dipakai apa adanya
+      mapping: "qgc",   // bukan "standard": nomor tombol sudah nomor QGC, dipakai apa adanya
       rawAxes: Array.from({ length: 6 }, (_, i) => Number(b.raw?.[i]) || 0),
       buttons: Array.from({ length: 16 }, (_, i) => (mask & (1 << i)) !== 0),
       devices: [],
@@ -205,7 +208,7 @@ function checkDuplicates() {
   }
   const dup = Object.entries(used).find(([, names]) => names.length > 1);
   ui.dup.hidden = !dup;
-  if (dup) ui.dup.textContent = `Axis ${dup[0]} dipakai oleh: ${dup[1].join(", ")}.`;
+  if (dup) ui.dup.textContent = `Axis ${dup[0]} is assigned to more than one control: ${dup[1].join(", ")}.`;
 }
 
 function updateTuneLabels() {
@@ -214,23 +217,23 @@ function updateTuneLabels() {
   });
 }
 
-// Isi ulang kontrol (slider, centang) dari draft.
+// Isi ulang kontrol (slider, checkbox) dari draft.
 function syncControls() {
   modal.querySelectorAll("[data-inv]").forEach((c) => { c.checked = draft.axes[c.dataset.inv].invert; });
   modal.querySelectorAll("[data-tune]").forEach((r) => { r.value = String(draft[r.dataset.tune]); });
   updateTuneLabels();
   checkDuplicates();
-  deviceSig = "";   // paksa daftar axis & pilihan axis dibangun ulang di frame berikutnya
+  deviceSig = "";   // paksa daftar axis dan pilihan axis dibangun ulang pada frame berikutnya
 }
 
-// Bangun ulang bagian yang jumlahnya tergantung joystick (axis, tombol, pilihan perangkat).
+// Bangun ulang bagian UI yang bergantung pada perangkat (daftar axis, tombol, pilihan perangkat).
 function ensureDeviceUi(snap) {
   const sig = [snap.connected, snap.source, snap.id, snap.rawAxes.length, snap.buttons.length,
     snap.devices.map((d) => d.id).join("|")].join("#");
   if (sig === deviceSig) return;
   deviceSig = sig;
 
-  // Pilihan perangkat (hanya tampil kalau ada lebih dari satu joystick di browser)
+  // Pilihan perangkat (hanya tampil jika browser mendeteksi lebih dari satu joystick)
   ui.device.hidden = snap.devices.length < 2;
   ui.device.replaceChildren(...snap.devices.map((d) => {
     const o = document.createElement("option");
@@ -240,7 +243,7 @@ function ensureDeviceUi(snap) {
   }));
   ui.device.value = snap.id;
 
-  // Bar axis mentah. Sumber Bridge: beri nama (LX, LY, RX, RY, LT, RT).
+  // Bar axis mentah. Source Bridge memakai nama (LX, LY, RX, RY, LT, RT).
   const n = snap.rawAxes.length;
   const axisName = (i) => (snap.source === "bridge" ? BRIDGE_AXIS_NAMES[i] || `S${i}` : `S${i}`);
   ui.axes.innerHTML = n
@@ -250,7 +253,7 @@ function ensureDeviceUi(snap) {
           <div class="st-bar" data-axis="${i}"><i></i></div>
           <b class="st-val" data-axis-val="${i}">0.00</b>
         </div>`).join("")
-    : `<p class="st-sub">Tidak ada axis terdeteksi.</p>`;
+    : `<p class="st-sub">No axes detected.</p>`;
   ui.axisBars = [...ui.axes.querySelectorAll("[data-axis]")];
   ui.axisVals = [...ui.axes.querySelectorAll("[data-axis-val]")];
 
@@ -259,14 +262,14 @@ function ensureDeviceUi(snap) {
     `<span class="st-btn" data-btn="${i}" title="${i}: ${l}">${i}</span>`).join("");
   ui.btnEls = [...ui.btns.querySelectorAll("[data-btn]")];
 
-  // Pilihan axis di mapping. Nilai tersimpan di luar jangkauan tetap ditampilkan supaya pengaturan tidak hilang diam-diam.
+  // Pilihan axis pada mapping. Nilai tersimpan yang berada di luar jangkauan tetap ditampilkan agar pengaturan tidak hilang tanpa terlihat.
   modal.querySelectorAll("[data-map]").forEach((sel) => {
     const cur = draft.axes[sel.dataset.map].axis;
     const count = Math.max(n || 6, cur + 1);
     const opts = [`<option value="-1">—</option>`];
     for (let i = 0; i < count; i++) {
       const nm = snap.source === "bridge" && BRIDGE_AXIS_NAMES[i] ? ` ${BRIDGE_AXIS_NAMES[i]}` : "";
-      opts.push(`<option value="${i}">Axis ${i}${nm}${n && i >= n ? " (tidak ada)" : ""}</option>`);
+      opts.push(`<option value="${i}">Axis ${i}${nm}${n && i >= n ? " (not present)" : ""}</option>`);
     }
     sel.innerHTML = opts.join("");
     sel.value = String(cur);
@@ -274,7 +277,7 @@ function ensureDeviceUi(snap) {
 }
 
 
-// ==================== Kurva respons ====================
+// ==================== Response curve ====================
 function drawCurve(liveInput) {
   const c = ui.curve;
   const w = c.clientWidth, h = c.clientHeight;
@@ -298,7 +301,7 @@ function drawCurve(liveInput) {
   ctx.moveTo(px(0), py(-1)); ctx.lineTo(px(0), py(1));
   ctx.stroke();
 
-  // Garis lurus = tanpa pengolahan, sebagai pembanding
+  // Garis lurus = tanpa pengolahan (pembanding)
   ctx.strokeStyle = "rgba(148,163,184,0.25)";
   ctx.setLineDash([3, 4]);
   ctx.beginPath();
@@ -316,7 +319,7 @@ function drawCurve(liveInput) {
   }
   ctx.stroke();
 
-  // Titik posisi stick sekarang (dari gerakan yang paling jauh digerakkan)
+  // Titik posisi stick saat ini (axis dengan simpangan terbesar)
   if (liveInput !== null) {
     ctx.fillStyle = "#22c55e";
     ctx.beginPath();
@@ -326,7 +329,7 @@ function drawCurve(liveInput) {
 }
 
 
-// ==================== Update tiap frame ====================
+// ==================== Update per frame ====================
 function tick() {
   rafId = requestAnimationFrame(tick);
   if (!modal) return;
@@ -334,28 +337,28 @@ function tick() {
   const snap = pickSnapshot(draft);
   ensureDeviceUi(snap);
 
-  // Status + sumber
+  // Status dan input source
   const problem = snap.source === "browser" ? getGamepadProblem() : null;
   let text, state;
   if (problem) {
     text = problem; state = "error";
   } else if (!snap.connected) {
-    text = "Joystick belum terdeteksi. Jalankan Joystick Bridge (disarankan), atau gerakkan stick agar browser mengenalinya.";
+    text = "No joystick detected. Start the Joystick Bridge (recommended) or move a stick so the browser detects it.";
     state = "off";
   } else if (snap.source === "bridge") {
-    text = `${shortName(snap.id)} · Bridge · ${snap.rawAxes.length} axis · 15 tombol · ${snap.rate} Hz`;
+    text = `${shortName(snap.id)} · Bridge · ${snap.rawAxes.length} axes · 15 buttons · ${snap.rate} Hz`;
     state = "ok";
   } else {
-    text = `${shortName(snap.id)} · Browser · ${snap.rawAxes.length} axis · ${snap.buttons.length} tombol`;
+    text = `${shortName(snap.id)} · Browser · ${snap.rawAxes.length} axes · ${snap.buttons.length} buttons`;
     state = "ok";
   }
   setText(ui.statusText, text);
-  setText(ui.source, snap.connected ? `(sumber: ${snap.source === "bridge" ? "Bridge" : "Browser"})` : "");
+  setText(ui.source, snap.connected ? `(source: ${snap.source === "bridge" ? "Bridge" : "Browser"})` : "");
   ui.statusText.title = snap.id;
   ui.status.dataset.state = state;
   ui.dot.dataset.state = state === "ok" ? "ok" : state === "error" ? "offline" : "warn";
 
-  // Axis & tombol mentah
+  // Axis dan tombol mentah
   ui.axisBars.forEach((bar, i) => {
     const v = snap.rawAxes[i] || 0;
     setBar(bar, v);
@@ -364,7 +367,7 @@ function tick() {
   const bmask = buttonMaskQgc(snap);
   ui.btnEls.forEach((el, i) => el.classList.toggle("on", (bmask & (1 << i)) !== 0));
 
-  // Keluaran setelah diolah (memakai draft, jadi efek slider langsung kelihatan)
+  // Output setelah diproses (memakai draft, sehingga efek slider langsung terlihat)
   const out = processAxes(snap.rawAxes, draft);
   let live = null, liveAbs = 0.02;
   for (const { key } of JOY_AXES) {
@@ -380,7 +383,7 @@ function tick() {
 }
 
 
-// ==================== Buka / tutup ====================
+// ==================== Open / close ====================
 function onKey(e) {
   if (e.key === "Escape") closeSettings();
 }
@@ -410,7 +413,7 @@ function bindFooter() {
     dirty = false;
     ui.dirty.hidden = true;
     ui.save.disabled = true;
-    appendLog("[JOY] Pengaturan joystick disimpan.");
+    appendLog("[JOY] Konfigurasi joystick disimpan.");
   });
 
   ui.reset.addEventListener("click", () => {
@@ -423,7 +426,7 @@ function bindFooter() {
 
   ui.exportBtn.addEventListener("click", () => {
     downloadBlob(new Blob([exportConfigText(draft)], { type: "application/json" }), "ROV_joystick_config.json");
-    appendLog("[JOY] Pengaturan di-export: ROV_joystick_config.json");
+    appendLog("[JOY] Konfigurasi di-export: ROV_joystick_config.json");
   });
 
   ui.importBtn.addEventListener("click", () => ui.file.click());
@@ -435,9 +438,9 @@ function bindFooter() {
       draft = parseConfigText(await file.text());
       syncControls();
       markDirty();
-      appendLog(`[JOY] Pengaturan dimuat dari ${file.name} (tekan Save untuk menetapkan).`);
+      appendLog(`[JOY] Konfigurasi dimuat dari ${file.name} (tekan Save untuk menetapkan).`);
     } catch (err) {
-      appendLog(`[JOY] Gagal import: ${err.message}`, "error");
+      appendLog(`[JOY] Import gagal: ${err.message}`, "error");
     }
   });
 }

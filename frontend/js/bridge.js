@@ -1,14 +1,22 @@
 //  ./frontend/js/bridge.js
-//  bridge.js - pemantau data Joystick Bridge (tools/joystick_bridge.py) lewat backend GET /control/bridge.
+//  bridge.js - Client untuk memantau status Joystick Bridge melalui endpoint backend GET /control/bridge.
 
 //  NOTE:
-//  Dipakai popup Settings supaya tampilannya mengikuti SUMBER joystick yang sebenarnya dipakai:
-//    - Bridge tersambung  -> Settings menampilkan data dari Bridge (sumbu mentah, tombol)
-//    - Bridge tidak ada   -> Settings memakai Gamepad API browser
-//  Polling hanya jalan selama ada yang berlangganan (watchBridge), jadi tidak membebani backend saat Settings tertutup.
+//  Joystick Bridge (tools/joystick_bridge.py) adalah proses terpisah di laptop operator yang membaca joystick dan mengirimkannya ke backend. 
+//  Modul ini hanya MEMBACA status tersebut agar UI (mis. Settings) dapat menampilkan data dari sumber yang sebenarnya dipakai.
+//
+//  Penggunaan:
+//    const stop = watchBridge();   // mulai polling (satu timer dipakai bersama oleh semua subscriber)
+//    const b = getBridge();        // snapshot terbaru, atau null jika Bridge tidak aktif / datanya sudah basi
+//    stop();                       // berhenti berlangganan
+//
+//  Polling hanya berjalan selama ada subscriber, sehingga tidak membebani backend saat tidak dibutuhkan.
+//  Field penting pada snapshot: connected, name, raw (axis mentah), recent (bitmask tombol), rate_hz.
 
 
 import { BACKEND_URL } from "./config.js";
+
+const STALE_MS = 1500;   // snapshot dianggap basi jika lebih lama dari ini
 
 let last = null;
 let lastAt = 0;
@@ -17,7 +25,7 @@ let users = 0;
 let inflight = false;
 
 async function poll() {
-  if (inflight) return;
+  if (inflight) return;   // jangan menumpuk request saat jaringan lambat
   inflight = true;
   try {
     const res = await fetch(`${BACKEND_URL}/control/bridge`, { signal: AbortSignal.timeout(1200) });
@@ -30,7 +38,7 @@ async function poll() {
   }
 }
 
-/** Mulai polling; mengembalikan fungsi untuk berhenti. */
+/** Mulai polling. Mengembalikan fungsi untuk berhenti berlangganan. */
 export function watchBridge(ms = 100) {
   users++;
   if (users === 1) { poll(); timer = setInterval(poll, ms); }
@@ -43,7 +51,7 @@ export function watchBridge(ms = 100) {
   };
 }
 
-/** Data Bridge terbaru kalau tersambung dan masih segar, selain itu null. */
+/** Snapshot Bridge terbaru jika terhubung dan masih segar; selain itu null. */
 export function getBridge() {
-  return last && last.connected && Date.now() - lastAt < 1500 ? last : null;
+  return last && last.connected && Date.now() - lastAt < STALE_MS ? last : null;
 }

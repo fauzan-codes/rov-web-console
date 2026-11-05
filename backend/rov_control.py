@@ -1,56 +1,58 @@
 """
 ./backend/rov_control.py
-rov_control.py - Kontrol ROV dari GCS (Tahap 2): joystick -> MANUAL_CONTROL, heartbeat GCS, arm/disarm, ganti mode.
+rov_control.py - Modul kontrol vehicle: joystick -> MANUAL_CONTROL, heartbeat GCS, ARM/DISARM, mode, dan Button Assignment.
 
-Dipakai oleh gcs_server.py:
+Modul ini diimpor oleh gcs_server.py:
     import rov_control
-    rov_control.init(app, ...)      # daftarkan route /control/*
-    rov_control.start()             # nyalakan thread pengirim + heartbeat
+    rov_control.init(app, ...)   # mendaftarkan route /control/* dan /buttons/*
+    rov_control.start()          # menjalankan thread pengirim MANUAL_CONTROL dan thread heartbeat
 
-DUA SUMBER INPUT (dipilih saat Enable Control):
-  "bridge"  : tools/joystick_bridge.py di laptop membaca joystick lewat SDL (seperti QGC) dan mengirim nilai
-              MENTAH ke /control/raw. Backend yang mengolah (mapping, deadband, expo, gain). TIDAK terpengaruh
-              fokus/tab browser. Ini sumber yang disarankan.
-  "browser" : dashboard membaca joystick lewat Gamepad API dan mengirim nilai SUDAH DIOLAH ke /control/axes.
-              Hanya jalan selama tab tampil dan fokus (batasan browser).
+ARSITEKTUR
+  Input source --> backend (menyimpan nilai TERBARU: axes + buttons)
+  Sender thread (20 Hz tetap) --MANUAL_CONTROL--> mavlink-routerd (UDP 14560) --> Pixhawk
+  Heartbeat thread (1 Hz)     --HEARTBEAT (type GCS)--> Pixhawk (mencegah GCS failsafe)
 
-ALUR:
-  sumber input --> backend menyimpan nilai TERBARU (sumbu + tombol)
-  Thread pengirim (20 Hz tetap) --MANUAL_CONTROL--> mavlink-routerd (UDP 14560) --> Pixhawk
-  Thread heartbeat (1 Hz)       --HEARTBEAT (type GCS)-> Pixhawk (supaya failsafe GCS tidak aktif)
+INPUT SOURCE (dipilih saat Enable Control)
+  "bridge"  : tools/joystick_bridge.py membaca joystick di laptop operator dan mengirim nilai MENTAH ke /control/raw. Mapping, deadband, expo, dan gain diterapkan di backend. Tidak terpengaruh fokus / tab browser (disarankan).
+  "browser" : dashboard membaca joystick lewat Gamepad API dan mengirim nilai SUDAH DIOLAH ke /control/axes. Hanya berfungsi selama tab tampil dan fokus (batasan browser).
 
-PENGATURAN JOYSTICK (mapping sumbu, invert, deadband, expo, gain):
-  Disimpan di dashboard (popup Settings) dan DIKIRIM ke backend lewat /control/config setiap berubah,
-  lalu disimpan di backend/joystick_config.json. Dipakai untuk sumber "bridge".
+KONFIGURASI JOYSTICK
+  Axis mapping, invert, deadband, exponential, dan gain diatur di dashboard (Settings > Joystick), dikirim ke /control/config, lalu disimpan di backend/joystick_config.json (dibuat otomatis). Dipakai oleh sumber "bridge".
 
-TOMBOL JOYSTICK:
-  Fungsi tombol (arm, disarm, mode_*, shift, gain_inc, ...) tersimpan di PIXHAWK (BTNn_FUNCTION / BTNn_SFUNCTION),
-  sama dengan yang diatur QGC. Backend hanya meneruskan bitmask tombol yang sedang ditekan di field `buttons`
-  MANUAL_CONTROL (16 bit). Nomor tombol dari bridge = nomor QGC (urutan SDL GameController).
-  - ROBOT SUNGGUHAN: fungsi tombol dijalankan firmware (hanya selama Enable Control ON, karena MANUAL_CONTROL
-    baru dikirim saat itu; sama seperti "Enable joystick input" di QGC).
-  - MODE DEV (tanpa robot): backend MENIRU firmware (arm, disarm, mode, gain) memakai tabel fungsi simulasi,
-    supaya tombol bisa dites di laptop. Fungsi lain (servo, lampu, kamera) hanya dicatat di log.
-  - Tabel fungsi tombol bisa diubah dari Settings > Button Assignment (/buttons/functions). Di robot sungguhan itu
-    menulis parameter BTNn_FUNCTION / BTNn_SFUNCTION di Pixhawk (sama dengan halaman Joystick QGC).
+BUTTON FUNCTIONS
+  Fungsi tiap tombol (arm, disarm, mode_*, shift, gain_inc, ...) disimpan di PIXHAWK sebagai parameter BTNn_FUNCTION / BTNn_SFUNCTION, sama seperti QGroundControl. 
+  Backend hanya meneruskan bitmask tombol yang sedang ditekan melalui field `buttons` pada MANUAL_CONTROL (16 bit). 
+  Nomor tombol mengikuti urutan SDL GameController (sama dengan QGC).
+  - Vehicle nyata : fungsi dijalankan firmware, hanya selama Enable Control aktif (MANUAL_CONTROL baru dikirim saat itu).
+  - DEV mode      : backend meniru fungsi dasar firmware (arm, disarm, mode, gain) dengan tabel simulasi di memori.
+                    Fungsi lain (servo, lampu, camera tilt) hanya dicatat di log.
+  - Tabel fungsi dapat diubah dari Settings > Button Assignment (menulis parameter di Pixhawk, atau tabel simulasi di DEV mode).
 
-PENGAMAN (jangan dilepas):
-  1. Default MATI: butuh ROV_ENABLE_CONTROL=1, lalu operator harus menekan ENABLE CONTROL di UI.
-  2. Watchdog di BACKEND: tidak ada data joystick > WATCHDOG_S -> kirim netral (tombol dilepas).
-  3. Tidak ada data > STALE_OFF_S -> control DIMATIKAN (harus Enable lagi; mencegah robot "lompat" saat data pulih).
-  4. Enable hanya diterima kalau semua stick netral dan tidak ada tombol ditekan.
-  5. Nilai dibatasi -1..1 lalu dikali LIMIT (ROV_CONTROL_LIMIT) di sini, bukan percaya pengirim.
-  6. Satu sumber kontrol: ArduSub hanya menerima MANUAL_CONTROL dari system id = SYSID_MYGCS (bawaan 255).
-     Backend memakai id yang sama dengan QGC, jadi QGC (joystick-nya) HARUS dimatikan saat GCS web dipakai nyetir.
-  7. Bridge dicabut / mati / joystick dicabut -> control mati sendiri.
+SAFETY (jangan dilepas)
+  1. Default MATI: butuh ROV_ENABLE_CONTROL=1, lalu operator menekan Enable Control di UI.
+  2. Watchdog di backend: tidak ada data joystick > WATCHDOG_S -> kirim netral dan lepas semua tombol.
+  3. Tidak ada data > STALE_OFF_S -> control dimatikan; operator harus Enable ulang (mencegah lonjakan saat data pulih).
+  4. Enable hanya diterima jika semua stick netral dan tidak ada tombol ditekan.
+  5. Nilai dibatasi -1..1 lalu dikali LIMIT (ROV_CONTROL_LIMIT) di backend; input dari klien tidak dipercaya begitu saja.
+  6. Satu sumber kontrol: ArduSub hanya menerima MANUAL_CONTROL dari system id = SYSID_MYGCS (default 255).
+     Backend memakai id yang sama dengan QGC, sehingga joystick QGC HARUS dinonaktifkan saat mengemudi dari sini.
+  7. Bridge berhenti / joystick dicabut -> control dimatikan otomatis.
+  8. STOP selalu diizinkan tanpa token, karena menghentikan vehicle tidak pernah berbahaya.
 
-SATUAN MANUAL_CONTROL (ArduSub):
+UNIT MANUAL_CONTROL (ArduSub)
   x (maju +), y (kanan +), r (yaw searah jarum jam +) : -1000..1000
   z (naik +)                                          : 0..1000, netral = 500
   buttons                                             : bitmask 16 bit
 
-CATATAN GAIN: firmware ArduSub juga punya "pilot gain" sendiri (tombol gain_inc / gain_dec, JS_GAIN_*) yang
-mengalikan input ini. Kekuatan akhir = gain di Settings x LIMIT x gain firmware (sama seperti di QGC).
+CATATAN GAIN
+  Firmware ArduSub memiliki "pilot gain" sendiri (fungsi tombol gain_inc / gain_dec, parameter JS_GAIN_*).
+  Output akhir = gain (Settings) x LIMIT x pilot gain firmware, sama seperti pada QGC.
+
+ENVIRONMENT VARIABLES
+  ROV_ENABLE_CONTROL=1       mengaktifkan fitur yang menulis ke vehicle (otomatis aktif di DEV mode)
+  ROV_CONTROL_LIMIT=0.05-1   batas kekuatan output (default 1.0)
+  ROV_CONTROL_WATCHDOG=<s>   batas waktu tanpa data sebelum output dinetralkan (default 0.4)
+  ROV_CONTROL_TOKEN=<token>  opsional; endpoint kontrol mewajibkan header X-ROV-Token yang sama
 """
 
 import collections
@@ -66,19 +68,19 @@ from types import SimpleNamespace
 from flask import jsonify, request
 
 # ==================== KONFIGURASI ====================
-SEND_HZ = 20                 # laju kirim MANUAL_CONTROL ke Pixhawk (tetap, tidak ikut pengirim input)
-WATCHDOG_S = float(os.environ.get("ROV_CONTROL_WATCHDOG", "0.4"))   # tidak ada data -> netral
-STALE_OFF_S = 2.0            # tidak ada data selama ini -> control dimatikan
-BRIDGE_FRESH_S = 1.0         # bridge dianggap tersambung kalau data terakhir lebih baru dari ini
-BTN_LATCH_S = 0.6            # tombol yang baru ditekan tetap 'terlihat' di UI selama ini (tap singkat tidak terlewat saat polling)
+SEND_HZ = 20                 # frekuensi tetap pengiriman MANUAL_CONTROL ke Pixhawk (independen dari laju input)
+WATCHDOG_S = float(os.environ.get("ROV_CONTROL_WATCHDOG", "0.4"))   # tanpa data selama ini -> output dinetralkan
+STALE_OFF_S = 2.0            # tanpa data selama ini -> control dimatikan (perlu Enable ulang)
+BRIDGE_FRESH_S = 1.0         # Bridge dianggap terhubung jika paket terakhir lebih baru dari ini
+BTN_LATCH_S = 0.6            # tombol yang baru ditekan tetap tampil di UI selama ini, agar tap singkat tidak terlewat oleh polling
 HEARTBEAT_S = 1.0            # interval heartbeat GCS
-CMD_TIMEOUT = 2.0            # detik menunggu ACK Pixhawk (arm / mode)
-NEUTRAL_BURST = 10           # berapa frame netral dikirim setelah control dimatikan (10 x 50 ms)
-START_NEUTRAL_TOL = 0.05     # stick dianggap netral kalau |nilai| <= ini saat ENABLE
-BUTTON_MASK = 0xFFFF         # field `buttons` MANUAL_CONTROL = 16 bit (tombol 0..15)
-# Batas kekuatan di sisi backend (0.05 - 1.0). Untuk tes pertama di air, pakai mis. ROV_CONTROL_LIMIT=0.5
+CMD_TIMEOUT = 2.0            # batas tunggu COMMAND_ACK dari Pixhawk (ARM / mode)
+NEUTRAL_BURST = 10           # jumlah frame netral yang dikirim setelah control dimatikan (10 x 50 ms)
+START_NEUTRAL_TOL = 0.05     # stick dianggap netral jika |nilai| <= ini saat Enable
+BUTTON_MASK = 0xFFFF         # field `buttons` pada MANUAL_CONTROL berukuran 16 bit (tombol 0..15)
+# Batas kekuatan output di backend (0.05 - 1.0). Gunakan nilai kecil (mis. 0.5) untuk uji pertama di air.
 LIMIT = max(0.05, min(1.0, float(os.environ.get("ROV_CONTROL_LIMIT", "1.0"))))
-# Token sederhana (opsional). Kalau diisi, endpoint kontrol butuh header X-ROV-Token yang sama.
+# Token sederhana (opsional). Jika diisi, endpoint kontrol mewajibkan header X-ROV-Token yang sama.
 TOKEN = os.environ.get("ROV_CONTROL_TOKEN", "")
 CONFIG_FILE = Path(__file__).resolve().parent / "joystick_config.json"
 
@@ -91,10 +93,11 @@ ARDUSUB_MODES = {
 }
 UI_MODES = {"manual": 19, "stabilize": 0, "depth_hold": 2}
 
-# ==== Fungsi tombol joystick (parameter BTNn_FUNCTION / BTNn_SFUNCTION di ArduSub) ====
-# Nomor fungsi = nilai parameter. Daftar ini HANYA berisi yang sudah dicocokkan dengan dokumentasi ArduSub
-# (nomor 6 mode_stabilize dan 31 lights1_cycle disimpulkan dari urutan di dokumentasi: cek hasilnya di QGC).
-# Fungsi lain (servo / aktuator, relay, roll_pitch_toggle, trim, dst.) tetap bisa dipasang lewat opsi "Nomor lain...".
+# ==== Fungsi tombol joystick (parameter BTNn_FUNCTION / BTNn_SFUNCTION pada ArduSub) ====
+# Nomor fungsi = nilai parameter. Daftar ini hanya memuat fungsi yang umum dipakai; fungsi lain (servo / actuator,
+# relay, roll_pitch_toggle, trim, dst.) tetap dapat dipasang lewat opsi "Other number..." di UI.
+# Catatan: nomor 6 (mode_stabilize) dan 31 (lights1_cycle) diturunkan dari urutan pada dokumentasi ArduSub;
+# verifikasi terhadap versi firmware yang dipakai (mis. lewat halaman Joystick di QGC).
 BTN_COUNT = 15               # tombol 0..14 (urutan QGC / SDL GameController)
 BTN_FUNCTIONS = [
   (0, "disabled"), (1, "shift"), (2, "arm_toggle"), (3, "arm"), (4, "disarm"),
@@ -105,19 +108,20 @@ BTN_FUNCTIONS = [
 ]
 BTN_NAME = {i: n for i, n in BTN_FUNCTIONS}
 
-# Tabel simulasi (mode DEV) = tata letak QGC milik tim, hanya fungsi yang ada di daftar di atas.
-# (nomor tombol: (fungsi, fungsi saat shift))
+# Tabel simulasi (DEV mode). Default meniru layout QGroundControl yang umum dipakai pada ROV; hanya memuat fungsi
+# dari daftar di atas. Berada di memori, sehingga kembali ke default setiap backend di-restart.
+# Format: nomor tombol: (fungsi, fungsi saat shift)
 _DEV_BTN_DEFAULT = {
   0: (21, 0), 1: (5, 0), 2: (7, 0), 3: (6, 0), 4: (4, 0), 5: (1, 0), 6: (3, 0),
   11: (42, 0), 12: (43, 0),
 }
-# Pilot gain ArduSub (JS_GAIN_*): bawaan 0.5, naik/turun dalam JS_GAIN_STEPS langkah antara min dan max.
+# Pilot gain ArduSub (JS_GAIN_*): default 0.5, naik/turun dalam JS_GAIN_STEPS langkah antara min dan max.
 JS_GAIN_MIN, JS_GAIN_MAX, JS_GAIN_STEPS, JS_GAIN_DEFAULT = 0.25, 1.0, 4, 0.5
 
-# Pengaturan joystick bawaan = tata letak QGC (RC Mode 4 di robot ini). Harus sama dengan defaultConfig() di joystick.js.
-#   stick kiri  : horizontal = Yaw,     vertikal = Forward (atas = maju)
+# Default joystick configuration (layout "Mode 4", sama dengan defaultConfig() di frontend/js/joystick.js):
+#   stick kiri  : horizontal = Yaw,     vertikal = Forward  (atas = maju)
 #   stick kanan : horizontal = Lateral, vertikal = Throttle (atas = naik)
-# Indeks sumbu = urutan SDL / Gamepad "standard": 0 kiri-X, 1 kiri-Y, 2 kanan-X, 3 kanan-Y.
+# Indeks axis mengikuti urutan SDL / Gamepad "standard": 0 Left X, 1 Left Y, 2 Right X, 3 Right Y.
 JOY_DEFAULT = {
   "axes": {
     "surge": {"axis": 1, "invert": True},
@@ -134,26 +138,26 @@ JOY_DEFAULT = {
 # ==================== STATE ====================
 _ctx = None
 _lock = threading.Lock()
-_active = False                       # operator sudah menekan ENABLE CONTROL
+_active = False                       # True selama Enable Control aktif
 _source = ""                          # "bridge" | "browser": sumber yang sedang menyetir
 _reason = ""                          # alasan control terakhir dimatikan
 _axes = dict.fromkeys(AXES, 0.0)      # nilai terbaru yang SUDAH diolah (-1..1)
 _buttons = 0                          # bitmask tombol terbaru
-_axes_t = 0.0                         # waktu data joystick terakhir (sumber aktif)
+_axes_t = 0.0                         # waktu data joystick terakhir dari source yang aktif
 _last = {"x": 0, "y": 0, "z": 500, "r": 0, "b": 0}   # paket terakhir yang dikirim
 _sent = 0
 _stale = False
 _burst = 0
 _started = False
 _bridge = {"t": 0.0, "connected": False, "name": "", "processed": dict.fromkeys(AXES, 0.0), "buttons": 0, "raw": []}
-_bridge_prev = 0                      # bitmask tombol dari paket bridge sebelumnya (deteksi tombol BARU ditekan)
+_bridge_prev = 0                      # bitmask tombol pada paket Bridge sebelumnya (untuk mendeteksi tombol yang BARU ditekan)
 _bridge_rx = 0                        # jumlah paket yang diterima dari bridge
 _rx_times = collections.deque(maxlen=40)          # waktu paket terakhir (hitung laju Hz)
 _btn_seen = {}                        # nomor tombol -> waktu terakhir terlihat ditekan
 _btn_events = collections.deque(maxlen=8)         # (waktu, nomor) tombol yang BARU ditekan
-_dev_btn = {n: list(_DEV_BTN_DEFAULT.get(n, (0, 0))) for n in range(BTN_COUNT)}   # tabel fungsi simulasi (DEV)
+_dev_btn = {n: list(_DEV_BTN_DEFAULT.get(n, (0, 0))) for n in range(BTN_COUNT)}   # tabel fungsi simulasi (DEV mode)
 _dev_gain = JS_GAIN_DEFAULT
-_prev_btn = 0                         # bitmask tombol pada tick sebelumnya (deteksi tombol BARU ditekan)
+_prev_btn = 0                         # bitmask tombol pada tick sebelumnya (emulator DEV mode)
 
 
 class ControlError(Exception):
@@ -183,7 +187,7 @@ def is_active():
 
 # ==================== PENGATURAN JOYSTICK ====================
 def _sanitize_cfg(raw):
-  """Apa pun yang datang dari browser / file dibersihkan dulu."""
+  """Validasi dan bersihkan konfigurasi joystick dari browser / file sebelum dipakai."""
   src = raw if isinstance(raw, dict) else {}
   out = copy.deepcopy(JOY_DEFAULT)
 
@@ -280,10 +284,10 @@ def _connected():
 
 def _need_master():
   if _ctx.mavutil is None:
-    raise ControlError("pymavlink tidak terpasang di backend", 503)
+    raise ControlError("pymavlink is not installed on the backend", 503)
   master = _ctx.get_master()
   if master is None:
-    raise ControlError("Pixhawk belum terhubung", 409)
+    raise ControlError("Pixhawk is not connected", 409)
   return master
 
 
@@ -316,20 +320,20 @@ def _command_long(cmd, p1=0, p2=0, p3=0, p4=0, p5=0, p6=0, p7=0, timeout=CMD_TIM
         break
       remaining = deadline - time.time()
       if remaining <= 0:
-        raise ControlError("Pixhawk tidak membalas perintah", 502)
+        raise ControlError("No response from Pixhawk", 502)
       _ctx.cond.wait(remaining)
   try:
     text = _ctx.mavutil.mavlink.enums["MAV_RESULT"][ack["result"]].name
   except Exception:   # noqa: BLE001
     text = str(ack["result"])
   if ack["result"] != 0:
-    time.sleep(0.4)   # STATUSTEXT penjelasan sering tiba sesaat setelah ACK
+    time.sleep(0.4)   # STATUSTEXT yang menjelaskan penolakan biasanya tiba sesaat setelah ACK
   return ack["result"], text, _ctx.statustext_since(t_sent)
 
 
 # ==================== ON / OFF ====================
 def deactivate(reason=""):
-  """Matikan control. Frame netral (tombol dilepas) tetap dikirim beberapa saat supaya robot pasti berhenti."""
+  """Matikan control. Beberapa frame netral (semua tombol dilepas) tetap dikirim agar vehicle pasti berhenti."""
   global _active, _reason, _burst, _buttons
   with _lock:
     was = _active
@@ -344,7 +348,7 @@ def deactivate(reason=""):
 
 # ==================== EMULATOR TOMBOL (hanya mode DEV) ====================
 def _dev_run(n, fid, shifted):
-  """Jalankan SATU fungsi tombol seperti firmware ArduSub (hanya yang bisa ditiru tanpa robot)."""
+  """Jalankan SATU fungsi tombol seperti firmware ArduSub (hanya fungsi yang dapat ditiru tanpa vehicle)."""
   global _dev_gain
   st = _ctx.state
   name = BTN_NAME.get(fid, f"#{fid}")
@@ -376,7 +380,7 @@ def _dev_run(n, fid, shifted):
 
 
 def _dev_buttons(mask):
-  """DEV: pada tombol yang BARU ditekan, jalankan fungsinya (tombol shift yang sedang ditahan -> fungsi shift)."""
+  """DEV mode: jalankan fungsi tombol yang BARU ditekan (jika tombol shift ditahan, pakai fungsi shift-nya)."""
   global _prev_btn
   fresh = mask & ~_prev_btn
   _prev_btn = mask
@@ -400,9 +404,9 @@ def _tick():
   if not active and burst <= 0:
     return
 
-  # Data joystick hilang cukup lama: matikan control (frame netral dikirim lewat burst di tick berikutnya)
+  # Data joystick hilang cukup lama: matikan control (frame netral dikirim lewat NEUTRAL_BURST pada tick berikutnya)
   if active and age > STALE_OFF_S:
-    deactivate("Tidak ada data joystick lebih dari 2 detik (bridge / tab mati)")
+    deactivate("No joystick data for over 2 s (Bridge stopped or tab hidden)")
     return
 
   master = None
@@ -410,17 +414,17 @@ def _tick():
     master = _ctx.get_master()
     if master is None:
       if active:
-        deactivate("Pixhawk terputus")
+        deactivate("Pixhawk disconnected")
       return
 
-  # WATCHDOG: data joystick terlalu lama tidak datang -> netral, semua tombol dilepas
+  # WATCHDOG: data joystick terlambat -> kirim netral dan lepas semua tombol
   stale = active and age > WATCHDOG_S
   if not active or stale:
     axes = dict.fromkeys(AXES, 0.0)
     buttons = 0
 
   if _ctx.dev_mode:
-    _dev_buttons(buttons)    # tanpa robot: tiru fungsi tombol firmware
+    _dev_buttons(buttons)    # DEV mode (tanpa vehicle): tiru fungsi tombol firmware
   x, y, z, r = _packet(axes)
   if master is not None:
     try:
@@ -452,7 +456,7 @@ def _sender_loop():
 
 
 def _heartbeat_loop():
-  """HEARTBEAT GCS 1 Hz. Tanpa ini, failsafe GCS ArduSub (FS_GCS_ENABLE) bisa aktif saat QGC tidak ada."""
+  """HEARTBEAT GCS 1 Hz. Tanpa ini, GCS failsafe ArduSub (FS_GCS_ENABLE) dapat aktif saat QGC tidak berjalan."""
   while True:
     time.sleep(HEARTBEAT_S)
     if not _ctx.enabled or _ctx.dev_mode or _ctx.mavutil is None:
@@ -473,14 +477,14 @@ def _heartbeat_loop():
 # ==================== ROUTE ====================
 def _guard():
   if TOKEN and request.headers.get("X-ROV-Token", "") != TOKEN:
-    return _err("Token kontrol salah atau belum diisi", 401)
+    return _err("Invalid or missing control token", 401)
   if not _ctx.enabled:
-    return _err("Kontrol dimatikan di backend. Jalankan backend dengan ROV_ENABLE_CONTROL=1.", 403)
+    return _err("Control is disabled on the backend. Start it with ROV_ENABLE_CONTROL=1.", 403)
   return None
 
 
 def _bridge_view(now):
-  """Ringkasan data bridge untuk UI: nilai mentah/olahan, tombol (termasuk yang baru saja dilepas), laju paket."""
+  """Ringkasan data Bridge untuk UI: axis mentah/olahan, tombol (termasuk yang baru dilepas), laju paket, dan event terakhir."""
   with _lock:
     b = dict(_bridge)
     seen = dict(_btn_seen)
@@ -510,7 +514,7 @@ def _bridge_view(now):
 
 
 def control_bridge():
-  """Ringan: hanya data bridge. Dipanggil sering oleh popup Settings (menampilkan input lewat bridge)."""
+  """Endpoint ringan yang hanya berisi data Bridge. Di-poll sering oleh Settings untuk menampilkan input dari Bridge."""
   return jsonify({"ok": True, "bridge": _bridge_view(time.time())})
 
 
@@ -557,14 +561,14 @@ def control_config_get():
 
 
 def control_config_set():
-  """Dashboard mengirim pengaturan joystick (dari popup Settings) setiap berubah."""
+  """Menerima pengaturan joystick dari dashboard (Settings > Joystick) dan menyimpannya ke joystick_config.json."""
   global _cfg
   g = _guard()
   if g:
     return g
   body = request.get_json(force=True, silent=True)
   if not isinstance(body, dict) or not isinstance(body.get("axes"), dict):
-    return _err("Pengaturan joystick tidak valid", 400)
+    return _err("Invalid joystick configuration", 400)
   new = _sanitize_cfg(body)
   _cfg = new
   try:
@@ -587,21 +591,21 @@ def control_enable():
   body = request.get_json(force=True, silent=True) or {}
 
   if not body.get("enabled"):
-    deactivate("dimatikan operator")
+    deactivate("disabled by operator")
     return jsonify(_status_dict())
 
   if not _connected():
-    return _err("Pixhawk belum terhubung", 409)
+    return _err("Pixhawk is not connected", 409)
 
   source = body.get("source") or "browser"
   if source not in ("bridge", "browser"):
-    return _err("source harus 'bridge' atau 'browser'", 400)
+    return _err("source must be 'bridge' or 'browser'", 400)
 
   if source == "bridge":
     with _lock:
       b = dict(_bridge)
     if not (b["connected"] and (time.time() - b["t"]) < BRIDGE_FRESH_S):
-      return _err("Bridge joystick belum terhubung. Jalankan tools/joystick_bridge.py di laptop.", 409)
+      return _err("Joystick Bridge is not connected. Start tools/joystick_bridge.py on the operator laptop.", 409)
     axes = dict(b["processed"])
     buttons = b["buttons"]
   else:
@@ -609,9 +613,9 @@ def control_enable():
     buttons = _clean_buttons(body.get("buttons"))
 
   if any(abs(v) > START_NEUTRAL_TOL for v in axes.values()):
-    return _err("Stick belum netral. Lepas semua stick, lalu coba lagi.", 409)
+    return _err("Sticks are not centered. Release all sticks and try again.", 409)
   if buttons != 0:
-    return _err("Ada tombol joystick yang masih ditekan. Lepas dulu, lalu coba lagi.", 409)
+    return _err("A joystick button is still pressed. Release it and try again.", 409)
 
   with _lock:
     _active = True
@@ -619,13 +623,13 @@ def control_enable():
     _reason = ""
     _axes.update(dict.fromkeys(AXES, 0.0))
     _buttons = 0
-    _axes_t = time.time()   # hitungan watchdog mulai dari sekarang
+    _axes_t = time.time()   # watchdog mulai menghitung dari sini
   _log(f"Control ON via {source} (limit {int(LIMIT * 100)}%, watchdog {int(WATCHDOG_S * 1000)} ms)")
   return jsonify(_status_dict())
 
 
 def control_axes():
-  """Sumber BROWSER, ~20 Hz: nilai sudah diolah di browser. Hanya menyimpan; pengiriman oleh thread pengirim."""
+  """Source BROWSER, ~20 Hz: nilai sudah diolah di browser. Endpoint ini hanya menyimpan; pengiriman dilakukan sender thread."""
   global _axes_t, _buttons
   g = _guard()
   if g:
@@ -645,7 +649,7 @@ def control_axes():
 
 
 def control_raw():
-  """Sumber BRIDGE, ~20 Hz: sumbu MENTAH (urutan SDL) + bitmask tombol (nomor QGC). Diolah di sini."""
+  """Source BRIDGE, ~20 Hz: axis MENTAH (urutan SDL) + bitmask tombol (nomor QGC). Pengolahan dilakukan di backend."""
   global _axes_t, _buttons
   g = _guard()
   if g:
@@ -686,14 +690,14 @@ def control_raw():
         lost = True
     active, source = _active, _source
   if lost:
-    deactivate("Joystick terputus / bridge berhenti")
+    deactivate("Joystick disconnected / Bridge stopped")
     active = False
   return jsonify({"ok": True, "active": active, "source": source if active else ""})
 
 
 def control_stop():
-  """STOP: selalu boleh (tanpa token / tanpa ENABLE), karena menghentikan itu selalu aman."""
-  deactivate("STOP operator")
+  """STOP selalu diizinkan (tanpa token / tanpa Enable), karena menghentikan vehicle tidak pernah berbahaya."""
+  deactivate("STOP by operator")
   return jsonify(_status_dict())
 
 
@@ -711,12 +715,12 @@ def control_arm():
     else:
       mav = _ctx.mavutil.mavlink if _ctx.mavutil else None
       if mav is None:
-        raise ControlError("pymavlink tidak terpasang di backend", 503)
+        raise ControlError("pymavlink is not installed on the backend", 503)
       result, text, px = _command_long(mav.MAV_CMD_COMPONENT_ARM_DISARM, 1 if want else 0)
       if result != 0:
         _log(f"{label} ditolak: {text} | {px}")
-        return _err(f"Pixhawk menolak {label} ({text})", 409, pixhawk_text=px)
-    # status armed datang lewat HEARTBEAT (1 Hz): tunggu sampai berubah
+        return _err(f"Pixhawk rejected {label} ({text})", 409, pixhawk_text=px)
+    # status armed diterima lewat HEARTBEAT (1 Hz): tunggu sampai berubah
     verified = _wait_for(lambda: bool(_ctx.state.get("armed")) == want, 3.0)
   except ControlError as e:
     return _err(str(e), e.code, **e.extra)
@@ -731,7 +735,7 @@ def control_mode():
   body = request.get_json(force=True, silent=True) or {}
   cid = UI_MODES.get(body.get("mode"))
   if cid is None:
-    return _err(f"Mode harus salah satu dari: {', '.join(UI_MODES)}", 400)
+    return _err(f"Mode must be one of: {', '.join(UI_MODES)}", 400)
   try:
     if _ctx.dev_mode:
       time.sleep(0.2)
@@ -739,12 +743,12 @@ def control_mode():
     else:
       mav = _ctx.mavutil.mavlink if _ctx.mavutil else None
       if mav is None:
-        raise ControlError("pymavlink tidak terpasang di backend", 503)
+        raise ControlError("pymavlink is not installed on the backend", 503)
       # p1 = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED (1), p2 = nomor mode ArduSub
       result, text, px = _command_long(mav.MAV_CMD_DO_SET_MODE, 1, cid)
       if result != 0:
         _log(f"Ganti mode ditolak: {text} | {px}")
-        return _err(f"Pixhawk menolak ganti mode ({text})", 409, pixhawk_text=px)
+        return _err(f"Pixhawk rejected the mode change ({text})", 409, pixhawk_text=px)
     verified = _wait_for(lambda: _ctx.state.get("custom_mode") == cid, 3.0)
   except ControlError as e:
     return _err(str(e), e.code, **e.extra)
@@ -754,12 +758,12 @@ def control_mode():
 
 # ==================== FUNGSI TOMBOL (Button Assignment) ====================
 def buttons_get():
-  """Baca fungsi tiap tombol (BTNn_FUNCTION dan BTNn_SFUNCTION) dari Pixhawk; mode DEV memakai tabel simulasi."""
+  """Baca fungsi tiap tombol (BTNn_FUNCTION dan BTNn_SFUNCTION) dari Pixhawk; DEV mode memakai tabel simulasi."""
   rows = []
   if _ctx.dev_mode:
     rows = [{"n": n, "f": _dev_btn[n][0], "s": _dev_btn[n][1]} for n in range(BTN_COUNT)]
   elif _ctx.param_read is None:
-    return _err("Pembaca parameter belum dipasang di backend", 503)
+    return _err("Parameter reader is not available on the backend", 503)
   else:
     with _ctx.cmd_lock:
       for n in range(BTN_COUNT):
@@ -771,7 +775,7 @@ def buttons_get():
           row["error"] = str(e)
         rows.append(row)
         if "error" in row and not _connected():
-          break          # Pixhawk tidak ada: jangan menunggu timeout 30 kali
+          break          # Pixhawk tidak terhubung: hentikan lebih awal, jangan menunggu timeout 30 kali
   return jsonify({
     "ok": True,
     "dev": bool(_ctx.dev_mode),
@@ -781,22 +785,22 @@ def buttons_get():
 
 
 def buttons_set(n):
-  """Ubah fungsi SATU tombol (atau fungsi shift-nya), lalu BACA ULANG untuk membuktikan."""
+  """Ubah fungsi SATU tombol (atau fungsi shift-nya), lalu baca ulang dari Pixhawk untuk verifikasi."""
   g = _guard()
   if g:
     return g
   if not 0 <= n < BTN_COUNT:
-    return _err(f"Tombol {n} tidak dikenal", 404)
+    return _err(f"Unknown button {n}", 404)
   body = request.get_json(force=True, silent=True)
   body = body if isinstance(body, dict) else {}
   fid = body.get("function")
   shifted = bool(body.get("shifted"))
   if not isinstance(fid, int) or isinstance(fid, bool) or not 0 <= fid <= 255:
-    return _err("function harus bilangan bulat 0-255", 400)
+    return _err("function must be an integer between 0 and 255", 400)
   if _active:
-    return _err("Matikan Drive Control dulu sebelum mengubah fungsi tombol.", 409)
+    return _err("Turn Drive Control OFF before changing button functions.", 409)
   if _ctx.state.get("armed"):
-    return _err("Robot sedang ARMED. Disarm dulu sebelum mengubah fungsi tombol.", 409)
+    return _err("Vehicle is ARMED. Disarm before changing button functions.", 409)
 
   name = f"BTN{n}_{'S' if shifted else ''}FUNCTION"
   idx = 1 if shifted else 0
@@ -806,7 +810,7 @@ def buttons_set(n):
       _dev_btn[n][idx] = fid
     else:
       if _ctx.param_write is None:
-        return _err("Penulis parameter belum dipasang di backend", 503)
+        return _err("Parameter writer is not available on the backend", 503)
       with _ctx.cmd_lock:
         old, new = _ctx.param_write(name, fid)
   except _ctx.param_error as e:

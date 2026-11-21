@@ -13,6 +13,8 @@ rem                          ned = seperti Pixhawk (mode PIXHAWK)
 set "ROV_DEV_POS=dr"
 rem Pakai webcam laptop sebagai kamera?  1 = ya, 0 = tidak (kamera sintetis)
 set "ROV_DEV_WEBCAM=0"
+rem Tawarkan menjalankan Joystick Bridge di akhir?  1 = ya, 0 = tidak
+set "OFFER_BRIDGE=1"
 rem =====================================================================
 
 set "VENV_PY=%ROOT%.venv\Scripts\python.exe"
@@ -20,6 +22,8 @@ set "URL=http://localhost:%FRONTEND_PORT%/?backend=http://localhost:%BACKEND_POR
 
 echo ============================================================
 echo   GCS ROV - MODE DEV DI LAPTOP (tanpa Jetson)
+echo   Drive Control aktif otomatis di mode ini (hanya simulasi,
+echo   tidak ada perintah yang dikirim ke robot).
 echo ============================================================
 echo.
 
@@ -42,6 +46,13 @@ if not exist "%ROOT%backend\%BACKEND_FILE%" (
     exit /b 1
 )
 
+if not exist "%ROOT%backend\rov_control.py" (
+    echo [GAGAL] File backend\rov_control.py tidak ditemukan.
+    echo         Modul Drive Control ini wajib ada di folder yang sama dengan %BACKEND_FILE%.
+    pause
+    exit /b 1
+)
+
 if not exist "%ROOT%backend\models\assembly_rov_80.glb" (
     echo [PERHATIAN] Model 3D belum ada: backend\models\assembly_rov_80.glb
     echo             Dashboard tetap jalan, tapi panel ROV DESIGN akan kosong.
@@ -52,6 +63,7 @@ rem --- Jalankan backend (jendela baru) --------------------------------
 netstat -ano | findstr /R /C:":%BACKEND_PORT% .*LISTENING" >nul
 if not errorlevel 1 (
     echo Backend sudah berjalan di port %BACKEND_PORT%, dipakai ulang.
+    echo Kalau tadi kode backend diubah, tutup jendela backend lama lalu jalankan file ini lagi.
 ) else (
     echo Menjalankan backend mode DEV ...
     start "GCS Backend DEV" /D "%ROOT%backend" cmd /k ""%VENV_PY%" "%BACKEND_FILE%" --dev"
@@ -133,11 +145,22 @@ if defined HAS_CHROME (
     start "" "%URL%"
 )
 
+rem --- Tawarkan Joystick Bridge ---------------------------------------
+if not "%OFFER_BRIDGE%"=="1" goto finish
+if not exist "%ROOT%2C_RUN_JOYSTICK_BRIDGE.bat" goto finish
+echo.
+choice /c YN /t 10 /d N /n /m "Jalankan Joystick Bridge juga? (Y/N, otomatis N dalam 10 detik): "
+if errorlevel 2 goto finish
+start "GCS Joystick Bridge" /D "%ROOT%" cmd /k ""%ROOT%2C_RUN_JOYSTICK_BRIDGE.bat" local"
+
+:finish
 echo.
 echo ============================================================
 echo   Dashboard terbuka di browser.
-echo   Ada 2 jendela hitam: backend dan frontend. Biarkan terbuka.
-echo   Untuk berhenti: tutup kedua jendela hitam itu dengan klik tombol X.
+echo   Ada 2 jendela hitam: backend dan frontend (+ 1 untuk Joystick
+echo   Bridge kalau tadi dipilih). Biarkan semuanya terbuka.
+echo   Untuk berhenti: tutup jendela hitam itu dengan klik tombol X.
+echo   Joystick belum dijalankan? Pakai 2C_RUN_JOYSTICK_BRIDGE.bat
 echo ============================================================
 pause
 exit /b 0

@@ -37,16 +37,38 @@ echo Memasang package. Butuh internet, bisa beberapa menit ...
 ".venv\Scripts\python.exe" -m pip install -r "backend\requirements-dev.txt"
 if errorlevel 1 goto pip_failed
 
+rem --- 3b. Opsional: pygame-ce untuk controller non-XInput ---------------
+rem Dilewati kalau file ini dipanggil dari file .bat lain (argumen "nopause").
+if /i "%~1"=="nopause" goto after_optional
+echo.
+echo Opsional: Joystick Bridge membaca controller XInput (Xbox, Logitech F310
+echo mode X, dll.) TANPA package tambahan. Untuk controller NON-XInput
+echo diperlukan pygame-ce.
+choice /c YN /n /m "Pasang pygame-ce sekarang? (Y/N): "
+if errorlevel 2 goto after_optional
+".venv\Scripts\python.exe" -m pip install pygame-ce
+if errorlevel 1 echo [PERHATIAN] pygame-ce gagal dipasang. Bridge tetap bisa dipakai untuk controller XInput.
+:after_optional
+
 rem --- 4. Cek hasil -----------------------------------------------------
 echo.
 echo Mengecek hasil instalasi ...
 ".venv\Scripts\python.exe" -c "import flask, flask_cors, cv2, numpy; print('OK - opencv', cv2.__version__)"
 if errorlevel 1 goto check_failed
 
+if exist "tools\joystick_bridge.py" (
+    echo.
+    echo Mengecek pembaca joystick ^(joystick tidak wajib terpasang^) ...
+    ".venv\Scripts\python.exe" "tools\joystick_bridge.py" --list
+)
+
 echo.
 echo ============================================================
 echo   INSTALL SELESAI.
-echo   Langkah berikutnya: jalankan 2A_RUN_DEV_LAPTOP.bat
+echo   Langkah berikutnya:
+echo     2A_RUN_DEV_LAPTOP.bat        simulasi di laptop (tanpa Jetson)
+echo     2B_RUN_WITH_JETSON.bat       dashboard untuk Jetson / robot
+echo     2C_RUN_JOYSTICK_BRIDGE.bat   joystick (lokal, Jetson, atau IP lain)
 echo ============================================================
 if /i not "%~1"=="nopause" pause
 exit /b 0

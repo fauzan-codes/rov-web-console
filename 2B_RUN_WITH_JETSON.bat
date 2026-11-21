@@ -8,6 +8,8 @@ rem ===================== PENGATURAN (boleh diubah) =====================
 set "JETSON_IP=192.168.1.10"
 set "BACKEND_PORT=8080"
 set "FRONTEND_PORT=5500"
+rem Tawarkan menjalankan Joystick Bridge di akhir?  1 = ya, 0 = tidak
+set "OFFER_BRIDGE=1"
 rem =====================================================================
 
 set "VENV_PY=%ROOT%.venv\Scripts\python.exe"
@@ -44,6 +46,21 @@ echo Mengecek backend di Jetson %JETSON_IP% ...
 powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing 'http://%JETSON_IP%:%BACKEND_PORT%/status' -TimeoutSec 4 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 goto jetson_unreachable
 echo Backend Jetson merespons. Bagus.
+
+rem --- Cek apakah Drive Control aktif di backend -----------------------
+rem Kode keluar: 0 = aktif, 2 = dimatikan (tanpa ROV_ENABLE_CONTROL=1), 1 = endpoint tidak ada
+powershell -NoProfile -Command "try { $r = Invoke-RestMethod 'http://%JETSON_IP%:%BACKEND_PORT%/control/status' -TimeoutSec 4; if ($r.available) { exit 0 } else { exit 2 } } catch { exit 1 }" >nul 2>&1
+set "CTRL_RC=%errorlevel%"
+if "%CTRL_RC%"=="0" echo Drive Control: AKTIF di backend Jetson.
+if "%CTRL_RC%"=="2" (
+    echo Drive Control: DIMATIKAN di backend Jetson.
+    echo   Joystick, ARM, Test/Reverse motor tidak akan berfungsi.
+    echo   Jalankan backend dengan:  ROV_ENABLE_CONTROL=1 python3 gcs_server.py
+)
+if "%CTRL_RC%"=="1" (
+    echo Drive Control: TIDAK TERSEDIA. Backend di Jetson belum versi terbaru
+    echo   ^(tidak ada /control/status^). Salin gcs_server.py dan rov_control.py ke Jetson.
+)
 goto start_frontend
 
 :jetson_unreachable
@@ -51,6 +68,7 @@ echo.
 echo [PERHATIAN] Backend di Jetson TIDAK merespons. Cek urutan ini:
 echo   1. Di Jetson, backend sudah dijalankan:  python3 gcs_server.py
 echo      Jangan tekan Ctrl+Z atau Ctrl+C di jendela itu, biarkan berjalan.
+echo      Untuk Drive Control:  ROV_ENABLE_CONTROL=1 python3 gcs_server.py
 echo   2. IP benar. Di Jetson ketik:  hostname -I
 echo   3. Laptop satu jaringan dengan Jetson, misalnya IP laptop 192.168.1.x
 echo      Cek di laptop dengan:  ipconfig
@@ -86,10 +104,22 @@ if defined HAS_CHROME (
     start "" "%URL%"
 )
 
+rem --- Tawarkan Joystick Bridge ---------------------------------------
+if not "%OFFER_BRIDGE%"=="1" goto finish
+if not exist "%ROOT%2C_RUN_JOYSTICK_BRIDGE.bat" goto finish
+echo.
+echo PENTING sebelum mengemudi: tutup QGroundControl atau matikan joystick-nya.
+echo Hanya satu aplikasi yang boleh mengirim kontrol joystick ke robot.
+choice /c YN /t 10 /d N /n /m "Jalankan Joystick Bridge ke Jetson %JETSON_IP%? (Y/N, otomatis N dalam 10 detik): "
+if errorlevel 2 goto finish
+start "GCS Joystick Bridge" /D "%ROOT%" cmd /k ""%ROOT%2C_RUN_JOYSTICK_BRIDGE.bat" ip %JETSON_IP%"
+
+:finish
 echo.
 echo ============================================================
 echo   Dashboard terbuka di browser, terhubung ke Jetson %JETSON_IP%
-echo   Ada 1 jendela hitam untuk frontend. Biarkan terbuka.
+echo   Ada 1 jendela hitam untuk frontend (+ 1 untuk Joystick Bridge
+echo   kalau tadi dipilih). Biarkan terbuka.
 echo   Untuk berhenti: tutup jendela hitam itu dengan klik tombol X.
 echo ============================================================
 pause
